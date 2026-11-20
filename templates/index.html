@@ -30,8 +30,10 @@
       </div>
       <div class="top-actions">
         {% if mode == "owner" %}
-          <button class="btn vis-btn" id="visBtn" type="button"></button>
-          <button class="btn" id="arrangeBtn" type="button" hidden>Arrange</button>
+          <div class="action-row">
+            <button class="btn vis-btn" id="visBtn" type="button"></button>
+            <button class="btn" id="arrangeBtn" type="button" hidden>Arrange</button>
+          </div>
           <button class="btn primary add-album-btn" id="addAlbumBtn" type="button"><span aria-hidden="true">+</span> Add Album</button>
         {% endif %}
       </div>
