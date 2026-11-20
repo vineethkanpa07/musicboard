@@ -106,7 +106,7 @@
     const rated = [...state.albums.values()].reduce((n, a) => n + a.songs.filter(s => s.rating != null).length, 0);
     $("#summary").textContent = state.albums.size
       ? `${plural(state.albums.size, "album")} · ${plural(gs.length, "artist")} · ${plural(rated, "track")} rated`
-      : "Every album you've played, scored track by track.";
+      : "";
     setStatus(state.arrange ? "Drag albums or artists, or use the arrows." : "Saved automatically");
 
     if (!state.albums.size) {
