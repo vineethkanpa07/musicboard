@@ -5,34 +5,32 @@ switching a page to public makes /<username> show a read-only copy of that
 person's dashboard.
 
 Run with:  python app.py   then open http://127.0.0.1:5000
+Hosting: see README.md (Render + a free Neon Postgres database).
 """
 
-import json
 import math
 import os
 import re
 import secrets
-import sqlite3
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
-import uuid
 from functools import wraps
 from pathlib import Path
 
 from flask import (Flask, abort, g, jsonify, redirect, render_template, request,
                    send_from_directory, session, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
+
+import db as database
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MUSICBOARD_DATA", BASE_DIR / "instance"))
 DB_PATH = DATA_DIR / "musicboard.db"
 COVER_DIR = DATA_DIR / "covers"
 
-# Album search uses Apple's free iTunes Search API (no key needed).
-ITUNES_API = os.environ.get("MUSICBOARD_ITUNES_API", "https://itunes.apple.com")
-ITUNES_COUNTRY = os.environ.get("MUSICBOARD_COUNTRY", "US")
+# Album covers are Apple's own artwork links, so nothing needs to be stored for them.
+ARTWORK_URL_RE = re.compile(r"^https://[a-z0-9-]+\.mzstatic\.com/[^\s\"'<>]+$")
+HOSTED = bool(os.environ.get("RENDER") or os.environ.get("MUSICBOARD_HOSTED"))
 
 USERNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_.-]{1,28})[a-z0-9]$")
 FILE_LIKE_RE = re.compile(r"\.(ico|txt|xml|json|webmanifest|html?|js|css|png|jpe?g|gif|svg|webp|php)$")
@@ -58,95 +56,31 @@ def load_secret_key():
 
 app = Flask(__name__)
 app.config.update(
-    MAX_CONTENT_LENGTH=10 * 1024 * 1024,  # 10 MB uploads
+    MAX_CONTENT_LENGTH=1024 * 1024,  # requests are small JSON now
     SECRET_KEY=load_secret_key(),
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=HOSTED,  # hosted sites use https, so only send the login cookie over https
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,  # stay logged in for 30 days
 )
+if HOSTED:
+    # Render sits in front of the app; trust its headers so the app knows requests arrived over https.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 
 # ---------------------------------------------------------------- database
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    username       TEXT NOT NULL UNIQUE,
-    password_hash  TEXT NOT NULL,
-    is_public      INTEGER NOT NULL DEFAULT 0,
-    created_at     REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS artists (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id   INTEGER REFERENCES users(id),
-    name      TEXT NOT NULL,
-    key       TEXT NOT NULL,
-    position  INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (user_id, key)
-);
-CREATE TABLE IF NOT EXISTS albums (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER REFERENCES users(id),
-    title       TEXT NOT NULL,
-    artist_id   INTEGER NOT NULL REFERENCES artists(id),
-    cover       TEXT,
-    position    INTEGER NOT NULL DEFAULT 0,
-    created_at  REAL NOT NULL,
-    top_song_id INTEGER  -- your pick for top track when several songs tie for the highest score
-);
-CREATE TABLE IF NOT EXISTS songs (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    album_id  INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
-    name      TEXT NOT NULL DEFAULT '',
-    rating    REAL,
-    position  INTEGER NOT NULL DEFAULT 0
-);
-"""
-
-
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = database.connect(DB_PATH)
     return g.db
 
 
 @app.teardown_appcontext
 def close_db(_exc):
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
-
-
-def columns(db, table):
-    return {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
-
-
-def init_db():
-    with sqlite3.connect(DB_PATH) as db:
-        # Databases from the single-user version have no user_id columns. Upgrade them in place;
-        # their albums are handed to the first account that signs up.
-        existing = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if "artists" in existing and "user_id" not in columns(db, "artists"):
-            # Build the new table beside the old one, then swap names, so the albums table's
-            # link to "artists" keeps pointing at the right table.
-            db.executescript("""
-                PRAGMA foreign_keys = OFF;
-                CREATE TABLE artists_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER REFERENCES users(id),
-                    name TEXT NOT NULL, key TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0,
-                    UNIQUE (user_id, key));
-                INSERT INTO artists_new (id, user_id, name, key, position)
-                    SELECT id, NULL, name, key, position FROM artists;
-                DROP TABLE artists;
-                ALTER TABLE artists_new RENAME TO artists;
-            """)
-        if "albums" in existing and "user_id" not in columns(db, "albums"):
-            db.execute("ALTER TABLE albums ADD COLUMN user_id INTEGER REFERENCES users(id)")
-        db.executescript(SCHEMA)
-        if "top_song_id" not in columns(db, "albums"):
-            db.execute("ALTER TABLE albums ADD COLUMN top_song_id INTEGER")
+    conn = g.pop("db", None)
+    if conn is not None:
+        database.close(conn)
 
 
 # ---------------------------------------------------------------- accounts
@@ -315,8 +249,15 @@ def next_album_position(db, artist_id):
     ).fetchone()[0]
 
 
+def cover_url(cover):
+    """Albums store Apple's artwork link; albums added before hosting support may have a local file."""
+    if not cover:
+        return None
+    return cover if cover.startswith("https://") else f"/covers/{cover}"
+
+
 def delete_cover(filename):
-    if filename:
+    if filename and not filename.startswith("https://"):
         try:
             (COVER_DIR / filename).unlink()
         except FileNotFoundError:
@@ -332,7 +273,7 @@ def album_json(db, row):
         "title": row["title"],
         "artist_id": row["artist_id"],
         "artist": row["artist"],
-        "cover_url": f"/covers/{row['cover']}" if row["cover"] else None,
+        "cover_url": cover_url(row["cover"]),
         "position": row["position"],
         "created_at": row["created_at"],
         "songs": [dict(s) for s in songs],
@@ -376,11 +317,10 @@ def library_for(db, user_id):
 @app.errorhandler(400)
 @app.errorhandler(404)
 @app.errorhandler(413)
-@app.errorhandler(502)
 def json_error(err):
     message = getattr(err, "description", "Request failed.")
     if err.code == 413:
-        message = "That image is too large. Pick one under 10 MB."
+        message = "That request was too large."
     if request.path.startswith("/api/"):
         return jsonify(error=message), err.code
     if err.code == 404:
@@ -454,151 +394,42 @@ def delete_album(album_id):
     return "", 204
 
 
-# ---------------------------------------------------------------- album search (iTunes)
-
-def itunes_get(path, **params):
-    url = f"{ITUNES_API}/{path}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Musicboard/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as err:
-        if err.code in (403, 429):  # Apple allows roughly 20 searches a minute
-            abort(502, "Apple's music search is busy. Wait a minute and try again.")
-        abort(502, "Album search isn't working right now. Try again in a moment.")
-    except (urllib.error.URLError, TimeoutError, ValueError):
-        abort(502, "Album search isn't reachable right now. Check your internet connection and try again.")
-
+# ---------------------------------------------------------------- adding albums from iTunes
 
 def big_artwork(url, size=600):
     """iTunes artwork URLs end in e.g. 100x100bb.jpg; ask for a larger square instead."""
     return re.sub(r"/\d+x\d+bb\.(jpg|png)$", f"/{size}x{size}bb.jpg", url or "") or None
 
 
-def download_cover(url):
-    if not url:
-        return None
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Musicboard/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if not resp.headers.get_content_type().startswith("image/"):
-                return None
-            data = resp.read(10 * 1024 * 1024 + 1)
-    except (urllib.error.URLError, TimeoutError):
-        return None  # the album still gets added, just without a cover
-    if len(data) > 10 * 1024 * 1024:
-        return None
-    filename = uuid.uuid4().hex + ".jpg"
-    (COVER_DIR / filename).write_bytes(data)
-    return filename
-
-
-def albums_from_songs(query):
-    """Albums that contain songs matching the search. Apple's album search can miss an artist's own
-    albums (searching "blonde frank ocean" doesn't return Blonde), but its song search finds them."""
-    albums = []
-    for r in itunes_get("search", term=query, entity="song", limit=100, country=ITUNES_COUNTRY).get("results", []):
-        if r.get("collectionId"):
-            albums.append({
-                "collectionId": r["collectionId"], "collectionName": r.get("collectionName"),
-                "artistName": r.get("collectionArtistName") or r.get("artistName"),
-                "releaseDate": r.get("releaseDate"), "trackCount": r.get("trackCount"),
-                "collectionExplicitness": r.get("collectionExplicitness"), "artworkUrl100": r.get("artworkUrl100"),
-            })
-    return albums
-
-
-JUNK_WORDS = ("tribute", "karaoke", "instrumental", "lullaby", "relaxing", "piano versions", "made famous", "cover versions")
-
-
-def rank_albums(items, query, song_hits=None):
-    """Apple's search ranks lots of singles first. Put full albums whose title matches the search on top."""
-    words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 1]
-
-    def score(item):
-        index, r = item
-        title = (r.get("collectionName") or "").lower()
-        artist = (r.get("artistName") or "").lower()
-        points = sum(2 for w in words if w in title) + sum(1 for w in words if w in artist)
-        if words and all(w in title or w in artist for w in words):
-            points += 3  # every word of the search is in the title or artist
-        bare_title = " ".join(re.findall(r"\w+", re.sub(r"[(\[].*?[)\]]", "", title)))  # drop "(Deluxe)" etc.
-        typed = " ".join(words)
-        typed_without_artist = " ".join(w for w in words if w not in artist.split())
-        if bare_title and bare_title in (typed, typed_without_artist):
-            points += 3  # the title is exactly what you typed (with or without the artist's name)
-        if any(j in title and j not in query.lower() for j in JUNK_WORDS):
-            points -= 5
-        points += min(3, (song_hits or {}).get(r.get("collectionId"), 0))  # several matching songs = likely the one you mean
-        if title.endswith(" - single") or (r.get("trackCount") or 0) <= 2:
-            points -= 4
-        elif title.endswith(" - ep"):
-            points -= 1
-        return (-points, index)  # ties keep Apple's order
-
-    return [r for _, r in sorted(enumerate(items), key=score)]
-
-
-@app.get("/api/search")
-@login_required
-def search_albums():
-    q = (request.args.get("q") or "").strip()
-    if len(q) < 2:
-        return jsonify(results=[])
-    albums = itunes_get("search", term=q, entity="album", limit=100, country=ITUNES_COUNTRY).get("results", [])
-    song_albums = albums_from_songs(q)
-    albums += song_albums
-    # How many matching songs come from each album: a rough popularity signal, since Apple gives none.
-    song_hits = {}
-    for r in song_albums:
-        song_hits[r["collectionId"]] = song_hits.get(r["collectionId"], 0) + 1
-    seen, unique = set(), []
-    for r in albums:
-        if r.get("collectionId") and r["collectionId"] not in seen:
-            seen.add(r["collectionId"]); unique.append(r)
-    results = []
-    for r in rank_albums(unique, q, song_hits)[:15]:
-        if r.get("collectionType") not in (None, "Album") or not r.get("collectionId"):
-            continue
-        results.append({
-            "id": r["collectionId"],
-            "title": r.get("collectionName", ""),
-            "artist": r.get("artistName", ""),
-            "year": (r.get("releaseDate") or "")[:4],
-            "tracks": r.get("trackCount"),
-            "explicit": r.get("collectionExplicitness") == "explicit",
-            "artwork": r.get("artworkUrl100"),
-        })
-    return jsonify(results=results)
+def clean_text(value, limit=300):
+    return " ".join(str(value or "").split())[:limit]
 
 
 @app.post("/api/albums/import")
 @login_required
 def import_album():
-    """Body: {"id": <iTunes collection id>}. Creates the album with its full tracklist and cover."""
+    """Adds an album picked from iTunes search, with its full tracklist.
+
+    The search runs in the visitor's browser (so Apple's rate limit is per visitor, not shared by
+    the whole site), and the browser sends the album it looked up:
+    {"title": ..., "artist": ..., "artwork": "https://...mzstatic.com/...", "tracks": ["Song", ...]}
+    """
     data = request.get_json(silent=True) or {}
-    try:
-        collection_id = int(data.get("id"))
-    except (TypeError, ValueError):
+    title, artist = clean_text(data.get("title")), clean_text(data.get("artist"))
+    tracks = data.get("tracks")
+    if not title or not artist or not isinstance(tracks, list) or len(tracks) > 300:
         abort(400, "Pick an album from the search results.")
-    found = itunes_get("lookup", id=collection_id, entity="song", country=ITUNES_COUNTRY).get("results", [])
-    album = next((r for r in found if r.get("wrapperType") == "collection"), None)
-    if album is None:
-        abort(404, "That album couldn't be found anymore. Try searching again.")
-    tracks = sorted(
-        (r for r in found if r.get("wrapperType") == "track" and r.get("kind", "song") == "song"),
-        key=lambda r: (r.get("discNumber") or 1, r.get("trackNumber") or 0),
-    )
+    names = [clean_text(t) for t in tracks if isinstance(t, str)] or [""]
+    artwork = big_artwork(data.get("artwork"))
+    if artwork and not ARTWORK_URL_RE.match(artwork):
+        artwork = None  # only Apple's artwork links are used as covers
     db = get_db()
-    artist_id = find_or_create_artist(db, uid(), album.get("artistName") or "Unknown artist")
-    cover_name = download_cover(big_artwork(album.get("artworkUrl100")))
+    artist_id = find_or_create_artist(db, uid(), artist)
     cur = db.execute(
         "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (uid(), (album.get("collectionName") or "Untitled").strip(), artist_id, cover_name,
-         next_album_position(db, artist_id), time.time()),
+        (uid(), title, artist_id, artwork, next_album_position(db, artist_id), time.time()),
     )
     album_id = cur.lastrowid
-    names = [(t.get("trackName") or "").strip() for t in tracks] or [""]
     db.executemany(
         "INSERT INTO songs (album_id, name, rating, position) VALUES (?, ?, NULL, ?)",
         [(album_id, name, i) for i, name in enumerate(names)],
@@ -681,7 +512,7 @@ def save_order():
     return "", 204
 
 
-init_db()
+database.init(DB_PATH)
 
 if __name__ == "__main__":
     app.run(debug=os.environ.get("MUSICBOARD_DEBUG", "1") == "1")

@@ -18,8 +18,9 @@ Rate every song on the albums you listen to, from 0.5 to 10.
 - Click **Public** to copy your link or make the board private again.
 - Albums saved before accounts existed are given to the first account that signs up.
 
-Built with Python (Flask) and SQLite. Your data is saved in `instance/musicboard.db`
-and covers in `instance/covers/`. That folder is ignored by git, so your ratings stay on your computer.
+Built with Python (Flask). On your computer your data is saved in `instance/musicboard.db` (SQLite).
+That folder is ignored by git, so your ratings stay on your computer. When hosted, the app uses a
+Postgres database instead (see below). Album covers are Apple's own artwork links.
 
 ## Run it
 
@@ -52,23 +53,50 @@ Open http://127.0.0.1:5000 in your browser.
 
 In VS Code you can also press **F5** and pick **Run Musicboard**.
 
-## Letting other people use it
+## Putting it online (free: Render + Neon)
 
-Running `python app.py` only serves your own computer. For friends to sign up or open your
-`/username` link, the app has to run on a hosting service (Render, Railway, PythonAnywhere and similar).
-When you host it, set two environment variables:
+Render runs the app and Neon keeps the data. Both have free plans. Render's free servers erase their
+files on every restart, which is why accounts, albums and scores live in Neon's database instead.
 
-- `MUSICBOARD_SECRET` to a long random string (it signs login cookies)
-- `MUSICBOARD_DEBUG=0` to turn off debug mode
+**1. Make the database (Neon)**
+
+1. Sign up at [neon.tech](https://neon.tech) and create a project. Pick the region closest to you
+   (and pick the same area for Render in step 2, for example both in US East).
+2. On the project dashboard, click **Connect** and copy the connection string. It looks like
+   `postgresql://user:password@ep-something-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require`.
+   Keep it private: anyone with it can read and change your data.
+
+**2. Put the app on Render**
+
+1. Sign up at [render.com](https://render.com) with your GitHub account.
+2. Click **New** > **Blueprint**, pick the `musicboard` repository, and click **Connect**.
+   Render reads `render.yaml` from the repo, so everything is set up for you.
+3. When it asks for `DATABASE_URL`, paste the Neon connection string. Click **Apply**.
+4. Wait for the first deploy to finish (a few minutes). Your site is at the address Render shows,
+   like `https://musicboard.onrender.com` (Render adds letters if the name is taken).
+5. Open it and sign up. The site starts empty; albums on your computer stay on your computer.
+
+**After that**
+
+- Every `git push` to `main` updates the site automatically.
+- Free Render sites go to sleep after about 15 minutes with no visitors. The next visit takes up to a
+  minute to load while it wakes up; after that it's normal speed. Nothing is lost while it sleeps.
+- Album search runs in each visitor's browser, so Apple's limit (about 20 searches a minute) is per
+  person, not shared by the whole site.
+
+Settings Render uses (already in `render.yaml`): `DATABASE_URL` (your Neon database),
+`MUSICBOARD_SECRET` (signs login cookies; Render generates it) and `MUSICBOARD_DEBUG=0`.
 
 ## Files
 
 | File | What it does |
 | --- | --- |
-| `app.py` | Flask server: accounts, SQLite database, public pages and the JSON API |
+| `app.py` | Flask server: accounts, public pages and the JSON API |
+| `db.py` | Database: SQLite on your computer, Postgres when `DATABASE_URL` is set |
+| `render.yaml` | Tells Render how to build and run the site |
 | `templates/index.html` | Your board, and other people's public pages |
 | `templates/auth.html` | Log in and sign up |
 | `templates/not_found.html` | Shown for private or unknown usernames |
 | `templates/_title.html`, `_head.html` | Shared title (with the vinyl) and page head |
-| `static/app.js` | Dashboard, album view, rating and drag-to-reorder logic |
+| `static/app.js` | Dashboard, album search (calls Apple from the browser), album view, rating and drag-to-reorder |
 | `static/style.css` | Styles (light and dark mode) |

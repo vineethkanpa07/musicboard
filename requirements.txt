@@ -1,1 +1,6 @@
 Flask>=3.0,<4
+# production web server used on Render (python app.py is still fine on your computer)
+gunicorn>=23,<24
+# Postgres support, used when DATABASE_URL is set (e.g. a free Neon database)
+psycopg[binary]>=3.2,<4
+psycopg-pool>=3.2,<4

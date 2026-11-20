@@ -284,6 +284,77 @@
   $("#arrangeBtn")?.addEventListener("click", () => { state.arrange = !state.arrange; renderDashboard(); });
   $("#addAlbumBtn")?.addEventListener("click", openAddAlbum);
 
+  // ---------- album search (Apple's iTunes catalog, called from your browser) ----------
+  // Searching from the browser means Apple's limit (about 20 requests a minute) applies to each
+  // visitor separately, instead of everyone sharing the server's limit.
+  const ITUNES = "https://itunes.apple.com";
+  class SearchError extends Error {}
+  async function itunes(path, params, signal) {
+    const url = `${ITUNES}/${path}?${new URLSearchParams({ country: "US", ...params })}`;
+    let res;
+    try { res = await fetch(url, { signal }); }
+    catch (err) {
+      if (err.name === "AbortError") throw err;
+      throw new SearchError("Search isn't reachable right now. Check your internet connection and try again.");
+    }
+    if (res.status === 403 || res.status === 429) throw new SearchError("Apple's music search is busy. Wait a minute and try again.");
+    if (!res.ok) throw new SearchError("Album search isn't working right now. Try again in a moment.");
+    try { return (await res.json()).results || []; }
+    catch (_) { throw new SearchError("Apple's music search is busy. Wait a minute and try again."); }
+  }
+  const wordsOf = text => (text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) || []);
+  const JUNK_WORDS = ["tribute", "karaoke", "instrumental", "lullaby", "relaxing", "piano versions", "made famous", "cover versions"];
+  // Apple's search ranks lots of singles and tribute albums first. Put full albums whose title
+  // matches the search on top, and boost albums that several matching songs come from.
+  function rankAlbums(items, query, songHits) {
+    const q = query.toLowerCase();
+    const words = wordsOf(query).filter(w => w.length > 1);
+    const score = r => {
+      const title = (r.collectionName || "").toLowerCase(), artist = (r.artistName || "").toLowerCase();
+      let points = words.filter(w => title.includes(w)).length * 2 + words.filter(w => artist.includes(w)).length;
+      if (words.length && words.every(w => title.includes(w) || artist.includes(w))) points += 3;
+      const bareTitle = wordsOf(title.replace(/[(\[].*?[)\]]/g, "")).join(" ");  // drop "(Deluxe)" etc.
+      const artistWords = artist.split(/\s+/);
+      const typed = words.join(" "), typedWithoutArtist = words.filter(w => !artistWords.includes(w)).join(" ");
+      if (bareTitle && (bareTitle === typed || bareTitle === typedWithoutArtist)) points += 3;
+      if (JUNK_WORDS.some(j => title.includes(j) && !q.includes(j))) points -= 5;
+      points += Math.min(3, songHits.get(r.collectionId) || 0);
+      if (title.endsWith(" - single") || (r.trackCount || 0) <= 2) points -= 4;
+      else if (title.endsWith(" - ep")) points -= 1;
+      return points;
+    };
+    return items.map((r, i) => ({ r, i, s: score(r) })).sort((a, b) => b.s - a.s || a.i - b.i).map(x => x.r);
+  }
+  async function searchAlbums(query, signal) {
+    // Album search can miss an artist's own albums (searching "blonde" skips Frank Ocean's Blonde),
+    // but song search finds them, so use both.
+    const [albums, songs] = await Promise.all([
+      itunes("search", { term: query, entity: "album", limit: 100 }, signal),
+      itunes("search", { term: query, entity: "song", limit: 100 }, signal),
+    ]);
+    const songHits = new Map();
+    const fromSongs = songs.filter(r => r.collectionId).map(r => {
+      songHits.set(r.collectionId, (songHits.get(r.collectionId) || 0) + 1);
+      return { collectionId: r.collectionId, collectionName: r.collectionName, artistName: r.collectionArtistName || r.artistName,
+               releaseDate: r.releaseDate, trackCount: r.trackCount, collectionExplicitness: r.collectionExplicitness, artworkUrl100: r.artworkUrl100 };
+    });
+    const seen = new Set(), unique = [];
+    for (const r of [...albums, ...fromSongs]) if (r.collectionId && !seen.has(r.collectionId)) { seen.add(r.collectionId); unique.push(r); }
+    return rankAlbums(unique, query, songHits).slice(0, 15)
+      .filter(r => r.collectionType === undefined || r.collectionType === "Album")
+      .map(r => ({ id: r.collectionId, title: r.collectionName || "", artist: r.artistName || "", year: (r.releaseDate || "").slice(0, 4),
+                   tracks: r.trackCount, explicit: r.collectionExplicitness === "explicit", artwork: r.artworkUrl100 }));
+  }
+  async function lookupAlbum(id) {
+    const found = await itunes("lookup", { id, entity: "song" });
+    const album = found.find(r => r.wrapperType === "collection");
+    if (!album) throw new SearchError("That album couldn't be found anymore. Try searching again.");
+    const tracks = found.filter(r => r.wrapperType === "track" && (r.kind || "song") === "song")
+      .sort((a, b) => (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0));
+    return { title: album.collectionName || "Untitled", artist: album.artistName || "Unknown artist",
+             artwork: album.artworkUrl100 || null, tracks: tracks.map(t => (t.trackName || "").trim()) };
+  }
+
   // ---------- add album ----------
   const closeOverlay = () => document.querySelector(".overlay")?.remove();
   function openAddAlbum() {
@@ -326,12 +397,10 @@
       searchTimer = setTimeout(async () => {
         searchCtl = new AbortController();
         try {
-          const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: searchCtl.signal });
-          const data = await res.json();
-          if (!res.ok) { resultsEl.innerHTML = `<p class="results-note">${esc(data.error || "Search failed.")}</p>`; return; }
-          showResults(data.results, q);
+          showResults(await searchAlbums(q, searchCtl.signal), q);
         } catch (err) {
-          if (err.name !== "AbortError") resultsEl.innerHTML = `<p class="results-note">Search isn't reachable right now. Check your internet connection and try again.</p>`;
+          if (err.name === "AbortError") return;
+          resultsEl.innerHTML = `<p class="results-note">${esc(err instanceof SearchError ? err.message : "Search failed. Try again.")}</p>`;
         }
       }, 300);
     });
@@ -344,10 +413,14 @@
       resultsEl.querySelectorAll(".result").forEach(b => { b.disabled = true; });
       btn.classList.add("loading"); btn.querySelector(".result-sub").textContent = "Adding album and tracklist…";
       try {
-        const album = await api("POST", "/api/albums/import", { id: r.id });
+        const details = await lookupAlbum(r.id);
+        const album = await api("POST", "/api/albums/import", details);
         state.albums.set(album.id, album); syncArtist(album);
         renderDashboard(); openAlbum(album.id, "rate");
-      } catch (_) { showResults(lastResults, $("#albumSearch").value.trim()); }
+      } catch (err) {
+        if (err instanceof SearchError) toast(err.message);
+        showResults(lastResults, $("#albumSearch").value.trim());
+      }
     });
     setTimeout(() => $("#albumSearch").focus(), 0);
   }
