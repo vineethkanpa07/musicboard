@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS albums (
     artist_id   INTEGER NOT NULL REFERENCES artists(id),
     cover       TEXT,
     position    INTEGER NOT NULL DEFAULT 0,
-    created_at  REAL NOT NULL
+    created_at  REAL NOT NULL,
+    top_song_id INTEGER  -- your pick for top track when several songs tie for the highest score
 );
 CREATE TABLE IF NOT EXISTS songs (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,6 +144,8 @@ def init_db():
         if "albums" in existing and "user_id" not in columns(db, "albums"):
             db.execute("ALTER TABLE albums ADD COLUMN user_id INTEGER REFERENCES users(id)")
         db.executescript(SCHEMA)
+        if "top_song_id" not in columns(db, "albums"):
+            db.execute("ALTER TABLE albums ADD COLUMN top_song_id INTEGER")
 
 
 # ---------------------------------------------------------------- accounts
@@ -325,6 +328,7 @@ def album_json(db, row):
         "position": row["position"],
         "created_at": row["created_at"],
         "songs": [dict(s) for s in songs],
+        "top_song_id": row["top_song_id"],
     }
 
 
@@ -593,6 +597,25 @@ def import_album():
     )
     db.commit()
     return jsonify(album_json(db, get_album_row(db, album_id))), 201
+
+
+@app.put("/api/albums/<int:album_id>/top")
+@login_required
+def set_top_track(album_id):
+    """Body: {"song_id": id}. Picks the top track among songs tied for the album's highest score."""
+    db = get_db()
+    get_album_row(db, album_id)
+    try:
+        song_id = int((request.get_json(silent=True) or {}).get("song_id"))
+    except (TypeError, ValueError):
+        abort(400, "Pick one of the songs.")
+    best = db.execute("SELECT MAX(rating) FROM songs WHERE album_id = ?", (album_id,)).fetchone()[0]
+    song = db.execute("SELECT rating FROM songs WHERE id = ? AND album_id = ?", (song_id, album_id)).fetchone()
+    if song is None or best is None or song["rating"] != best:
+        abort(400, "Only songs with the album's highest score can be the top track.")
+    db.execute("UPDATE albums SET top_song_id = ? WHERE id = ?", (song_id, album_id))
+    db.commit()
+    return jsonify(top_song_id=song_id)
 
 
 @app.post("/api/albums/<int:album_id>/songs")

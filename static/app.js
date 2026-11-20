@@ -384,11 +384,27 @@
     const a = state.albums.get(state.openId); if (!a) return;
     const avg = albumAvg(a);
     const rated = a.songs.filter(s => s.rating != null);
-    const best = rated.length ? rated.reduce((x, y) => (y.rating > x.rating ? y : x)) : null;
+    const top = rated.length ? Math.max(...rated.map(s => s.rating)) : null;
+    const tied = rated.filter(s => s.rating === top && s.name.trim());
+    // When several songs share the highest score, you pick which one is the top track.
+    const best = tied.find(s => s.id === a.top_song_id) || tied[0] || null;
+    let topHtml = "";
+    if (best && tied.length > 1 && !RO) {
+      topHtml = `<select class="top-pick" id="topPick" aria-label="Top track (${tied.length} songs scored ${fmt(top)})">
+        ${tied.map(s => `<option value="${s.id}" ${s === best ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`;
+    } else if (best) {
+      topHtml = `<div style="font-weight:600;overflow-wrap:anywhere">${esc(best.name)}</div>`;
+    }
     $("#albStats").innerHTML = `
       <div class="stat"><div class="k">Average</div><div class="v">${avg != null ? `<span class="big-avg" style="background:${ratingColor(avg)}">${fmt(avg)}</span>` : "—"}</div></div>
       <div class="stat"><div class="k">Rated</div><div class="v">${rated.length}/${a.songs.filter(s => s.name || s.rating != null).length}</div></div>
-      ${best && best.name ? `<div class="stat" style="min-width:0"><div class="k">Top track</div><div style="font-weight:600;overflow-wrap:anywhere">${esc(best.name)}</div></div>` : ""}`;
+      ${topHtml ? `<div class="stat" style="min-width:0"><div class="k">Top track${tied.length > 1 ? ` · ${tied.length}-way tie` : ""}</div>${topHtml}</div>` : ""}`;
+    $("#topPick")?.addEventListener("change", async e => {
+      const songId = Number(e.target.value), before = a.top_song_id;
+      a.top_song_id = songId;
+      try { await api("PUT", `/api/albums/${a.id}/top`, { song_id: songId }); }
+      catch (_) { a.top_song_id = before; renderStats(); }
+    });
   }
   function trackHtml(s, i) {
     const filled = s.rating != null;
