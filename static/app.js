@@ -357,6 +357,13 @@
 
   // ---------- add album ----------
   const closeOverlay = () => document.querySelector(".overlay")?.remove();
+  // Escape closes whichever window is open (album, Add album, visibility), wherever the focus is.
+  // Each window sets ov.onEscape to its own close step, so the album view still saves pending scores.
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    const ov = document.querySelector(".overlay");
+    if (ov?.onEscape) { e.preventDefault(); ov.onEscape(); }
+  });
   function openAddAlbum() {
     closeOverlay();
     const ov = document.createElement("div"); ov.className = "overlay";
@@ -370,7 +377,7 @@
       </div></div>`;
     document.body.appendChild(ov);
     ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
-    ov.addEventListener("keydown", e => { if (e.key === "Escape") closeOverlay(); });
+    ov.onEscape = closeOverlay;
     $("#newCancel").onclick = closeOverlay;
 
     // --- search ---
@@ -424,7 +431,7 @@
         showResults(lastResults, $("#albumSearch").value.trim());
       }
     });
-    setTimeout(() => $("#albumSearch").focus(), 0);
+    setTimeout(() => $("#albumSearch")?.focus(), 0);
   }
 
   // ---------- album sheet ----------
@@ -465,7 +472,7 @@
     const close = () => { flushSongs(); state.openId = null; closeOverlay(); renderDashboard(); };
     ov.addEventListener("mousedown", e => { if (e.target === ov) close(); });
     $("#closeAlbum").onclick = close; $("#doneAlbum").onclick = close;
-    ov.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+    ov.onEscape = close;
     if (RO) return;
 
     $("#delAlbum").onclick = () => {
@@ -616,7 +623,7 @@
         </div></div>`;
     document.body.appendChild(ov);
     ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
-    ov.addEventListener("keydown", e => { if (e.key === "Escape") closeOverlay(); });
+    ov.onEscape = closeOverlay;
     $("#visDone").onclick = closeOverlay;
     const setPublic = async isPublic => {
       try {
