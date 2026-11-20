@@ -9,8 +9,17 @@
     <header class="top">
       <div class="top-left">
         {% if mode == "owner" %}
-          <span class="who">{{ me.username }}'s Shelf</span>
-          <form method="post" action="{{ url_for('logout') }}"><button class="link-btn" type="submit">Log out</button></form>
+          <div class="who-row">
+            <span class="who">{{ me.username }}'s Shelf</span>
+            <button class="bell-btn" id="bellBtn" type="button" aria-label="Notifications" title="Notifications">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <span class="badge" id="bellBadge" hidden></span>
+            </button>
+          </div>
+          <div class="who-row">
+            <button class="link-btn" id="friendsBtn" type="button">Friends<span class="badge inline" id="friendsBadge" hidden></span></button>
+            <form method="post" action="{{ url_for('logout') }}"><button class="link-btn" type="submit">Log out</button></form>
+          </div>
         {% elif me and me.id == page_user.id %}
           <a class="link-btn" href="{{ url_for('index') }}">← Back to editing</a>
         {% elif me %}

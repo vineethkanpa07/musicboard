@@ -10,6 +10,15 @@ Rate every song on the albums you listen to, from 0.5 to 10.
 - The dashboard groups albums by artist automatically. Press **Arrange** to drag
   albums within an artist, or drag whole artists up and down (arrow buttons work too).
 
+## Friends and notifications
+
+- Click **Friends** (under your name) to search for people by username and send a friend request.
+  They can accept or decline it; you can cancel a request or remove a friend at any time.
+- The **bell** next to your name shows unread notifications: friend requests, accepted requests, and
+  when a friend **adds an album** or **rates songs** on one, with the album cover and how long ago.
+  Scoring a whole album sends one notification, not one per song.
+- The page checks for new notifications every 2 minutes while it's open and visible.
+
 ## Accounts and public pages
 
 - Everyone signs up with a **username and password**. Each person only sees their own albums.

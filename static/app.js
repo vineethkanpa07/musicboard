@@ -659,6 +659,152 @@
   });
   window.addEventListener("beforeunload", flushSongs);
 
+  // ---------- friends & notifications ----------
+  const bellBtn = $("#bellBtn"), friendsBtn = $("#friendsBtn");
+  function timeAgo(then, now = Date.now() / 1000) {
+    const s = Math.max(0, now - then);
+    if (s < 60) return "just now";
+    const units = [["minute", 60], ["hour", 3600], ["day", 86400], ["week", 604800]];
+    if (s < 2592000) {
+      const [name, size] = units.filter(([, size]) => s >= size).pop();
+      const n = Math.floor(s / size);
+      return `${n} ${name}${n === 1 ? "" : "s"} ago`;
+    }
+    return new Date(then * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+  const smallCover = url => url ? url.replace(/\/\d+x\d+bb\.jpg$/, "/100x100bb.jpg") : null;
+  const avatar = name => `<span class="avatar" aria-hidden="true">${esc((name || "?")[0].toUpperCase())}</span>`;
+  function setBadge(el, n) { if (!el) return; el.hidden = !n; el.textContent = n > 99 ? "99+" : String(n || ""); }
+  async function refreshBadges() {
+    if (!bellBtn) return;
+    try {
+      const c = await api("GET", "/api/notifications/unread", undefined, { quiet: true });
+      setBadge($("#bellBadge"), c.unread); setBadge($("#friendsBadge"), c.requests);
+      bellBtn.setAttribute("aria-label", c.unread ? `Notifications, ${c.unread} unread` : "Notifications");
+    } catch (_) { }
+  }
+  // Check for new notifications every 2 minutes, but only while this tab is visible, so the
+  // database can sleep when nobody is looking.
+  if (bellBtn) {
+    refreshBadges();
+    setInterval(() => { if (document.visibilityState === "visible") refreshBadges(); }, 120000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshBadges(); });
+  }
+
+  function noteText(n) {
+    const who = `<b>${esc(n.actor)}</b>`, album = `<b>${esc(n.album_title || "an album")}</b>`;
+    return { friend_request: `${who} sent you a friend request`, friend_accepted: `${who} accepted your friend request`,
+             album_added: `${who} added ${album} to their shelf`, album_edited: `${who} rated songs on ${album}` }[n.kind] || who;
+  }
+  async function openNotifications() {
+    closeOverlay();
+    const ov = document.createElement("div"); ov.className = "overlay";
+    ov.innerHTML = `<div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="notesH"><div class="sheet-body">
+      <h3 id="notesH">Notifications</h3><div class="scroll" id="notesList"><p class="panel-empty">Loading…</p></div>
+      <div class="row"><button class="btn primary" type="button" id="notesDone">Done</button></div></div></div>`;
+    document.body.appendChild(ov);
+    ov.onEscape = closeOverlay;
+    ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
+    $("#notesDone").onclick = closeOverlay;
+    let data;
+    try { data = await api("GET", "/api/notifications"); } catch (_) { $("#notesList").innerHTML = `<p class="panel-empty">Couldn't load notifications. Try again.</p>`; return; }
+    const list = data.notifications;
+    if (!$("#notesList")) return;  // closed while loading
+    $("#notesList").innerHTML = list.length ? `<ul class="panel-list">${list.map((n, i) => {
+      const thumb = n.album_cover ? `<img class="note-thumb" src="${esc(smallCover(n.album_cover))}" alt="">`
+        : n.album_title ? `<span class="note-thumb" aria-hidden="true"></span>` : avatar(n.actor);
+      const goes = n.kind === "friend_request" || n.actor_public;
+      return `<li class="${goes ? "clickable" : ""}" data-i="${i}" ${goes ? 'tabindex="0" role="button"' : ""}>${thumb}
+        <span class="note">${noteText(n)}<time datetime="${new Date(n.created_at * 1000).toISOString()}">${timeAgo(n.created_at, data.now)}</time></span>
+        ${n.read ? "" : '<span class="note-unread" title="New"></span>'}</li>`;
+    }).join("")}</ul>` : `<p class="panel-empty">No notifications yet. When friends add or rate albums, you'll see it here.</p>`;
+    const go = li => {
+      const n = list[Number(li.dataset.i)];
+      if (n.kind === "friend_request") openFriends();
+      else if (n.actor_public) location.href = `/${encodeURIComponent(n.actor)}`;
+    };
+    $("#notesList").addEventListener("click", e => { const li = e.target.closest("li.clickable"); if (li) go(li); });
+    $("#notesList").addEventListener("keydown", e => { const li = e.target.closest("li.clickable"); if (li && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(li); } });
+    if (list.some(n => !n.read)) { try { await api("POST", "/api/notifications/read", {}, { quiet: true }); } catch (_) { } }
+    refreshBadges();
+  }
+
+  function openFriends() {
+    closeOverlay();
+    const ov = document.createElement("div"); ov.className = "overlay";
+    ov.innerHTML = `<div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="friendsH"><div class="sheet-body">
+      <h3 id="friendsH">Friends</h3>
+      <div class="field"><label for="userSearch">Find people</label>
+        <input class="text" id="userSearch" type="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Search by username"></div>
+      <div id="userResults"></div>
+      <div class="scroll" id="friendsLists"><p class="panel-empty">Loading…</p></div>
+      <div class="row"><button class="btn primary" type="button" id="friendsDone">Done</button></div></div></div>`;
+    document.body.appendChild(ov);
+    ov.onEscape = closeOverlay;
+    ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
+    $("#friendsDone").onclick = closeOverlay;
+
+    const personLine = (name, isPublic, extra = "") => `${avatar(name)}<span class="person">${isPublic
+      ? `<a href="/${encodeURIComponent(name)}">${esc(name)}</a>` : esc(name)}<small>${extra || (isPublic ? "Public board" : "Private board")}</small></span>`;
+    const actionFor = r => ({
+      none: `<button class="btn small primary" type="button" data-do="request" data-user="${esc(r.username)}">Add friend</button>`,
+      request_sent: `<button class="btn small" type="button" data-do="remove" data-user="${esc(r.username)}" title="Cancel request">Requested</button>`,
+      request_received: `<button class="btn small primary" type="button" data-do="request" data-user="${esc(r.username)}">Accept</button>`,
+      friend: `<span class="person" style="flex:none"><small>Friends</small></span>`,
+    })[r.relation];
+
+    async function loadLists() {
+      let f;
+      try { f = await api("GET", "/api/friends"); } catch (_) { return; }
+      const box = $("#friendsLists"); if (!box) return;
+      const section = (title, items, render, empty) => `<div class="panel-section"><h4>${title}</h4>${items.length
+        ? `<ul class="panel-list">${items.map(render).join("")}</ul>` : `<p class="panel-empty">${empty}</p>`}</div>`;
+      box.innerHTML =
+        (f.received.length ? section(`Friend requests (${f.received.length})`, f.received, r => `<li>${personLine(r.username, r.is_public, `Sent ${timeAgo(r.since)}`)}
+          <button class="btn small primary" type="button" data-do="accept" data-id="${r.id}">Accept</button>
+          <button class="btn small" type="button" data-do="decline" data-id="${r.id}">Decline</button></li>`, "") : "") +
+        section(`Your friends (${f.friends.length})`, f.friends, r => `<li>${personLine(r.username, r.is_public)}
+          <button class="btn small" type="button" data-do="unfriend" data-user="${esc(r.username)}">Remove</button></li>`,
+          "No friends yet. Search for someone's username above.") +
+        (f.sent.length ? section("Requests you sent", f.sent, r => `<li>${personLine(r.username, r.is_public, `Waiting since ${timeAgo(r.since)}`)}
+          <button class="btn small" type="button" data-do="remove" data-user="${esc(r.username)}">Cancel</button></li>`, "") : "");
+    }
+
+    let searchTimer = null, lastQuery = "";
+    async function runSearch() {
+      const q = $("#userSearch")?.value.trim() || "", box = $("#userResults");
+      lastQuery = q;
+      if (!box) return;
+      if (q.length < 2) { box.innerHTML = ""; return; }
+      let res;
+      try { res = await api("GET", `/api/users/search?q=${encodeURIComponent(q)}`, undefined, { quiet: true }); } catch (_) { box.innerHTML = `<p class="panel-empty">Search isn't working right now.</p>`; return; }
+      if (q !== lastQuery || !$("#userResults")) return;
+      box.innerHTML = res.results.length ? `<ul class="panel-list">${res.results.map(r => `<li>${personLine(r.username, r.is_public)}${actionFor(r)}</li>`).join("")}</ul>`
+        : `<p class="panel-empty">Nobody with a username like “${esc(q)}”.</p>`;
+    }
+    $("#userSearch").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 250); });
+
+    // one handler for every button in the window; the unfriend button asks before removing
+    ov.addEventListener("click", async e => {
+      const b = e.target.closest("button[data-do]"); if (!b || b.disabled) return;
+      const act = b.dataset.do, user = b.dataset.user, id = b.dataset.id;
+      if (act === "unfriend" && b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Remove?"; b.classList.add("danger"); return; }
+      b.disabled = true;
+      try {
+        if (act === "request") { const r = await api("POST", "/api/friends/request", { username: user }); toast(r.relation === "friend" ? `You and ${user} are now friends` : `Friend request sent to ${user}`); }
+        if (act === "accept") { await api("POST", `/api/friends/${id}/accept`); toast("Friend request accepted"); }
+        if (act === "decline") await api("POST", `/api/friends/${id}/decline`);
+        if (act === "remove" || act === "unfriend") await api("DELETE", `/api/friends/${encodeURIComponent(user)}`);
+      } catch (_) { b.disabled = false; return; }
+      await Promise.all([loadLists(), runSearch()]);
+      refreshBadges();
+    });
+    loadLists();
+    setTimeout(() => $("#userSearch")?.focus(), 0);
+  }
+  bellBtn?.addEventListener("click", openNotifications);
+  friendsBtn?.addEventListener("click", openFriends);
+
   // ---------- page visibility (private by default; public = /username) ----------
   const visBtn = $("#visBtn");
   const publicUrl = () => `${location.origin}/${MB.username}`;

@@ -38,6 +38,7 @@ FILE_LIKE_RE = re.compile(r"\.(ico|txt|xml|json|webmanifest|html?|js|css|png|jpe
 RESERVED_USERNAMES = {
     "about", "account", "admin", "api", "covers", "help", "login", "logout", "me",
     "musicboard", "new", "settings", "signup", "static", "u", "user", "users",
+    "friends", "notifications", "search",
 }
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -522,6 +523,7 @@ def import_album():
         "INSERT INTO songs (album_id, name, rating, position) VALUES (?, ?, NULL, ?)",
         [(album_id, name, i) for i, name in enumerate(names)],
     )
+    notify(db, friend_ids(db, uid()), uid(), "album_added", {"id": album_id, "title": title, "cover": artwork})
     db.commit()
     return jsonify(album_json(db, get_album_row(db, album_id))), 201
 
@@ -558,8 +560,229 @@ def update_song(song_id):
             db.execute("UPDATE songs SET rating = ? WHERE id = ?", (rating, song_id))
             # remember when this album was last rated: the newest-rated album wins ties in Top albums
             db.execute("UPDATE albums SET rated_at = ? WHERE id = ?", (time.time(), song["album_id"]))
+            notify_album_edited(db, uid(), db.execute("SELECT id, title, cover FROM albums WHERE id = ?", (song["album_id"],)).fetchone())
     db.commit()
     return jsonify(dict(db.execute("SELECT id, name, rating FROM songs WHERE id = ?", (song_id,)).fetchone()))
+
+
+# ---------------------------------------------------------------- friends
+
+def friend_ids(db, user_id):
+    rows = db.execute(
+        "SELECT requester_id, addressee_id FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)",
+        (user_id, user_id),
+    ).fetchall()
+    return [r["addressee_id"] if r["requester_id"] == user_id else r["requester_id"] for r in rows]
+
+
+def friendship_between(db, a, b):
+    return db.execute(
+        "SELECT * FROM friendships WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)",
+        (a, b, b, a),
+    ).fetchone()
+
+
+def relation(db, me, other):
+    """How `other` relates to `me`: friend, request_sent, request_received or none."""
+    f = friendship_between(db, me, other)
+    if f is None:
+        return "none", None
+    if f["status"] == "accepted":
+        return "friend", f["id"]
+    return ("request_sent" if f["requester_id"] == me else "request_received"), f["id"]
+
+
+def notify(db, user_ids, actor_id, kind, album=None):
+    now = time.time()
+    db.executemany(
+        "INSERT INTO notifications (user_id, actor_id, kind, album_id, album_title, album_cover, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(u, actor_id, kind, album["id"] if album else None, album["title"] if album else None,
+          album["cover"] if album else None, now) for u in user_ids],
+    )
+
+
+EDIT_GROUPING_SECONDS = 6 * 60 * 60
+
+
+def notify_album_edited(db, actor_id, album_row):
+    """Tell friends an album's scores changed, without one notification per song: if a friend already has
+    an unread "added" or "edited" notification for this album from the last few hours, bump its time instead."""
+    now = time.time()
+    for friend in friend_ids(db, actor_id):
+        recent = db.execute(
+            "SELECT id, kind FROM notifications WHERE user_id = ? AND actor_id = ? AND album_id = ? AND read_at IS NULL "
+            "AND kind IN ('album_added', 'album_edited') AND created_at > ? ORDER BY created_at DESC",
+            (friend, actor_id, album_row["id"], now - EDIT_GROUPING_SECONDS),
+        ).fetchone()
+        if recent is None:
+            notify(db, [friend], actor_id, "album_edited", album_row)
+        elif recent["kind"] == "album_edited":
+            db.execute("UPDATE notifications SET created_at = ? WHERE id = ?", (now, recent["id"]))
+        # a recent unread "added" already covers it: they'll see the album with its scores
+
+
+def user_by_name(db, username):
+    row = db.execute("SELECT id, username, is_public FROM users WHERE username = ?", ((username or "").strip().lower().lstrip("@"),)).fetchone()
+    if row is None:
+        abort(404, "Nobody has that username.")
+    return row
+
+
+@app.get("/api/users/search")
+@login_required
+def search_users():
+    q = (request.args.get("q") or "").strip().lower().lstrip("@")
+    if len(q) < 2:
+        return jsonify(results=[])
+    db = get_db()
+    pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = db.execute(
+        "SELECT id, username, is_public FROM users WHERE username LIKE ? ESCAPE '\\' AND id != ? "
+        "ORDER BY CASE WHEN username LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END, username LIMIT 10",
+        (pattern, uid(), pattern[1:]),
+    ).fetchall()
+    results = []
+    for r in rows:
+        rel, _ = relation(db, uid(), r["id"])
+        results.append({"username": r["username"], "is_public": bool(r["is_public"]), "relation": rel})
+    return jsonify(results=results)
+
+
+@app.get("/api/friends")
+@login_required
+def list_friends():
+    db = get_db()
+    rows = db.execute(
+        "SELECT f.id, f.status, f.requester_id, f.created_at, u.username, u.is_public FROM friendships f "
+        "JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END "
+        "WHERE f.requester_id = ? OR f.addressee_id = ? ORDER BY u.username",
+        (uid(), uid(), uid()),
+    ).fetchall()
+    out = {"friends": [], "received": [], "sent": []}
+    for r in rows:
+        item = {"id": r["id"], "username": r["username"], "is_public": bool(r["is_public"]), "since": r["created_at"]}
+        if r["status"] == "accepted":
+            out["friends"].append(item)
+        else:
+            out["sent" if r["requester_id"] == uid() else "received"].append(item)
+    return jsonify(out)
+
+
+@app.post("/api/friends/request")
+@login_required
+def send_friend_request():
+    """Body: {"username": "..."}. If they already asked you, this accepts their request instead."""
+    db = get_db()
+    other = user_by_name(db, (request.get_json(silent=True) or {}).get("username"))
+    if other["id"] == uid():
+        abort(400, "That's you.")
+    rel, fid = relation(db, uid(), other["id"])
+    if rel == "friend":
+        return jsonify(relation="friend")
+    if rel == "request_sent":
+        return jsonify(relation="request_sent")
+    if rel == "request_received":
+        db.execute("UPDATE friendships SET status = 'accepted' WHERE id = ?", (fid,))
+        notify(db, [other["id"]], uid(), "friend_accepted")
+        db.commit()
+        return jsonify(relation="friend")
+    db.execute("INSERT INTO friendships (requester_id, addressee_id, status, created_at) VALUES (?, ?, 'pending', ?)",
+               (uid(), other["id"], time.time()))
+    notify(db, [other["id"]], uid(), "friend_request")
+    db.commit()
+    return jsonify(relation="request_sent"), 201
+
+
+def forget_request_notification(db, to_user, from_user):
+    db.execute("DELETE FROM notifications WHERE kind = 'friend_request' AND user_id = ? AND actor_id = ?", (to_user, from_user))
+
+
+def received_request(db, request_id):
+    row = db.execute("SELECT * FROM friendships WHERE id = ? AND addressee_id = ? AND status = 'pending'",
+                     (request_id, uid())).fetchone()
+    if row is None:
+        abort(404, "That friend request isn't there anymore.")
+    return row
+
+
+@app.post("/api/friends/<int:request_id>/accept")
+@login_required
+def accept_friend_request(request_id):
+    db = get_db()
+    row = received_request(db, request_id)
+    db.execute("UPDATE friendships SET status = 'accepted' WHERE id = ?", (request_id,))
+    notify(db, [row["requester_id"]], uid(), "friend_accepted")
+    db.commit()
+    return jsonify(relation="friend")
+
+
+@app.post("/api/friends/<int:request_id>/decline")
+@login_required
+def decline_friend_request(request_id):
+    db = get_db()
+    row = received_request(db, request_id)
+    db.execute("DELETE FROM friendships WHERE id = ?", (request_id,))
+    forget_request_notification(db, to_user=uid(), from_user=row["requester_id"])
+    db.commit()
+    return jsonify(relation="none")
+
+
+@app.delete("/api/friends/<username>")
+@login_required
+def remove_friend(username):
+    """Unfriend someone, or cancel a request you sent them."""
+    db = get_db()
+    other = user_by_name(db, username)
+    f = friendship_between(db, uid(), other["id"])
+    if f is not None:
+        db.execute("DELETE FROM friendships WHERE id = ?", (f["id"],))
+        if f["status"] == "pending":  # a cancelled request: take it out of their notifications too
+            forget_request_notification(db, to_user=f["addressee_id"], from_user=f["requester_id"])
+        db.commit()
+    return jsonify(relation="none")
+
+
+# ---------------------------------------------------------------- notifications
+
+@app.get("/api/notifications")
+@login_required
+def list_notifications():
+    db = get_db()
+    # keep the newest 200 per person
+    db.execute(
+        "DELETE FROM notifications WHERE user_id = ? AND id NOT IN "
+        "(SELECT id FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200)", (uid(), uid()))
+    db.commit()
+    rows = db.execute(
+        "SELECT n.*, u.username AS actor, u.is_public AS actor_public FROM notifications n "
+        "JOIN users u ON u.id = n.actor_id WHERE n.user_id = ? ORDER BY n.created_at DESC LIMIT 50",
+        (uid(),),
+    ).fetchall()
+    items = [{
+        "id": r["id"], "kind": r["kind"], "actor": r["actor"], "actor_public": bool(r["actor_public"]),
+        "album_title": r["album_title"], "album_cover": cover_url(r["album_cover"]),
+        "created_at": r["created_at"], "read": r["read_at"] is not None,
+    } for r in rows]
+    return jsonify(notifications=items, now=time.time())
+
+
+@app.get("/api/notifications/unread")
+@login_required
+def unread_count():
+    db = get_db()
+    count = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL", (uid(),)).fetchone()[0]
+    requests_waiting = db.execute(
+        "SELECT COUNT(*) FROM friendships WHERE addressee_id = ? AND status = 'pending'", (uid(),)).fetchone()[0]
+    return jsonify(unread=count, requests=requests_waiting)
+
+
+@app.post("/api/notifications/read")
+@login_required
+def mark_notifications_read():
+    db = get_db()
+    db.execute("UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL", (time.time(), uid()))
+    db.commit()
+    return jsonify(unread=0)
 
 
 @app.put("/api/order")
