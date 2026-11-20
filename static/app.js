@@ -560,6 +560,7 @@
     ov.addEventListener("mousedown", e => { if (e.target === ov) close(); });
     $("#closeAlbum").onclick = close; $("#doneAlbum").onclick = close;
     ov.onEscape = close;
+    a._showAllComments = false;  // each time an album opens, start with just the newest comments
     loadComments(a);
     if (RO) return;
     if (!a.year) fillInYear(a);
@@ -612,16 +613,24 @@
       } catch (_) { post.disabled = false; }
     });
   }
+  // Up to 6 comments show at first (the most recent ones); "Show all" reveals the older ones.
+  const COMMENTS_SHOWN = 6;
   function renderComments(a) {
     const list = $("#commentList"), data = a._comments; if (!list || !data) return;
-    $("#commentsH").textContent = data.comments.length ? `Comments (${data.comments.length})` : "Comments";
-    list.innerHTML = data.comments.length ? `<ul class="comment-list">${data.comments.map(c => `<li data-id="${c.id}">
+    const all = data.comments, hidden = a._showAllComments ? 0 : Math.max(0, all.length - COMMENTS_SHOWN);
+    $("#commentsH").textContent = all.length ? `Comments (${all.length})` : "Comments";
+    list.innerHTML = (hidden ? `<button class="link-btn show-all-comments" type="button" id="showAllComments">Show all ${all.length} comments</button>` : "") +
+      (all.length ? `<ul class="comment-list">${all.slice(hidden).map(c => `<li data-id="${c.id}">
         ${avatar(c.author)}<div class="comment-main">
           <div class="comment-meta"><b>${esc(c.author)}</b>${c.is_owner ? '<span class="comment-tag">Owner</span>' : ""}
             <time datetime="${new Date(c.created_at * 1000).toISOString()}">${timeAgo(c.created_at, data.now)}</time></div>
           <p class="comment-body">${esc(c.body)}</p></div>
         ${c.can_delete ? `<button class="icon-btn comment-del" type="button" data-del-comment="${c.id}" aria-label="Delete comment" title="Delete">✕</button>` : ""}
-      </li>`).join("")}</ul>` : `<p class="panel-empty">No comments yet.${data.can_post ? " Say what you think of it." : ""}</p>`;
+      </li>`).join("")}</ul>` : `<p class="panel-empty">No comments yet.${data.can_post ? " Say what you think of it." : ""}</p>`);
+    $("#showAllComments")?.addEventListener("click", () => {
+      a._showAllComments = true; renderComments(a);
+      $("#commentList .comment-list li")?.querySelector(".comment-meta b")?.scrollIntoView({ block: "nearest" });
+    });
   }
   // deleting asks first: the first click turns the ✕ into "Delete?"
   document.addEventListener("click", async e => {
