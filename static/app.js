@@ -9,6 +9,8 @@
     return `hsl(${hue.toFixed(1)} 72% ${light.toFixed(1)}%)`;
   }
   const fmt = n => { const r = Math.round(n * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1); };
+  // Averages always show one decimal ("8.0"); song scores stay as typed ("8", "7.5").
+  const fmtAvg = n => (Math.round(n * 10) / 10).toFixed(1);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const $ = s => document.querySelector(s);
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -100,7 +102,7 @@
     const bar = songs.length ? `<div class="mini-bar" aria-hidden="true">${songs.map(s =>
       `<i style="background:${s.rating != null ? ratingColor(s.rating) : "var(--surface-2)"}"></i>`).join("")}</div>` : "";
     return `<button class="card" type="button" data-id="${a.id}" ${state.arrange ? 'draggable="true"' : ""} aria-label="${esc(a.title)} by ${esc(a.artist)}">
-      <div class="sleeve">${sleeveHtml(a)}${avg != null ? `<span class="avg" style="background:${ratingColor(avg)}">${fmt(avg)}</span>` : ""}</div>
+      <div class="sleeve">${sleeveHtml(a)}${avg != null ? `<span class="avg" style="background:${ratingColor(avg)}">${fmtAvg(avg)}</span>` : ""}</div>
       ${state.arrange ? `<div class="card-move">
         <span class="icon-btn" role="button" tabindex="0" data-act="left" data-id="${a.id}" aria-label="Move left" ${ai === 0 ? 'style="visibility:hidden"' : ""}>◀</span>
         <span class="icon-btn" role="button" tabindex="0" data-act="right" data-id="${a.id}" aria-label="Move right" ${ai === n - 1 ? 'style="visibility:hidden"' : ""}>▶</span></div>` : ""}
@@ -143,7 +145,7 @@
       return `<section class="group" data-group="${g.id}" ${state.arrange ? 'draggable="true"' : ""}>
         <div class="group-head">
           <h2>${esc(g.name)}</h2>
-          ${gAvg != null ? `<span class="group-avg" style="background:${ratingColor(gAvg)}" title="Average of ${esc(g.name)}'s albums">${fmt(gAvg)}</span>` : ""}
+          ${gAvg != null ? `<span class="group-avg" style="background:${ratingColor(gAvg)}" title="Average of ${esc(g.name)}'s albums">${fmtAvg(gAvg)}</span>` : ""}
           <span class="meta">${plural(g.albums.length, "album")}</span>
           ${state.arrange ? `<div class="group-tools">
             <button class="icon-btn" type="button" data-act="gup" data-key="${g.id}" ${gi === 0 ? "disabled" : ""} aria-label="Move ${esc(g.name)} up">▲</button>
@@ -539,7 +541,7 @@
       topHtml = `<div style="font-weight:600;overflow-wrap:anywhere">${esc(best.name)}</div>`;
     }
     $("#albStats").innerHTML = `
-      <div class="stat"><div class="k">Average</div><div class="v">${avg != null ? `<span class="big-avg" style="background:${ratingColor(avg)}">${fmt(avg)}</span>` : "—"}</div></div>
+      <div class="stat"><div class="k">Average</div><div class="v">${avg != null ? `<span class="big-avg" style="background:${ratingColor(avg)}">${fmtAvg(avg)}</span>` : "—"}</div></div>
       <div class="stat"><div class="k">Rated</div><div class="v">${rated.length}/${a.songs.filter(s => s.name || s.rating != null).length}</div></div>
       ${topHtml ? `<div class="stat" style="min-width:0"><div class="k">Top track${tied.length > 1 ? ` · ${tied.length}-way tie` : ""}</div>${topHtml}</div>` : ""}`;
     $("#topPick")?.addEventListener("change", async e => {
