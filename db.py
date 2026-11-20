@@ -187,9 +187,10 @@ def _get_pool():
     global _pool
     if _pool is None:
         from psycopg_pool import ConnectionPool
-        # Small pool: free databases allow few connections. check= replaces connections the
-        # database closed while idle (Neon does this after a few minutes).
-        _pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=5, kwargs={"row_factory": _row_factory},
+        # Small pool: free databases allow few connections. min_size=0 and max_idle close
+        # connections after a minute of no use, so a free Neon database can go to sleep (it only
+        # counts compute time while awake). check= replaces connections the database closed.
+        _pool = ConnectionPool(DATABASE_URL, min_size=0, max_size=5, max_idle=60, kwargs={"row_factory": _row_factory},
                                check=ConnectionPool.check_connection, open=True)
     return _pool
 
