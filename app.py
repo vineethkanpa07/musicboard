@@ -425,6 +425,7 @@ def delete_album(album_id):
     db = get_db()
     row = get_album_row(db, album_id)
     db.execute("DELETE FROM songs WHERE album_id = ?", (album_id,))
+    db.execute("DELETE FROM comments WHERE album_id = ?", (album_id,))
     db.execute("DELETE FROM albums WHERE id = ?", (album_id,))
     remove_empty_artists(db, uid())
     db.commit()
@@ -844,13 +845,30 @@ def list_notifications():
         "(SELECT id FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200)", (uid(), uid()))
     db.commit()
     rows = db.execute(
-        "SELECT n.*, u.username AS actor, u.is_public AS actor_public FROM notifications n "
-        "JOIN users u ON u.id = n.actor_id WHERE n.user_id = ? ORDER BY n.created_at DESC LIMIT 50",
+        "SELECT n.*, u.username AS actor, u.is_public AS actor_public, "
+        "o.id AS owner_id, o.username AS owner, o.is_public AS owner_public FROM notifications n "
+        "JOIN users u ON u.id = n.actor_id "
+        "LEFT JOIN albums a ON a.id = n.album_id LEFT JOIN users o ON o.id = a.user_id "
+        "WHERE n.user_id = ? ORDER BY n.created_at DESC LIMIT 50",
         (uid(),),
     ).fetchall()
+
+    def link(r):
+        """Where clicking goes: the album itself when it still exists and you can see it, else the person's board."""
+        if r["kind"] == "friend_request":
+            return None
+        if r["owner_id"] is not None:
+            if r["owner_id"] == uid():
+                return f"/#album-{r['album_id']}"
+            if can_view_board(db, uid(), r["owner_id"], r["owner_public"]):
+                return f"/{r['owner']}#album-{r['album_id']}"
+        if can_view_board(db, uid(), r["actor_id"], r["actor_public"]):
+            return f"/{r['actor']}"
+        return None
+
     items = [{
-        "id": r["id"], "kind": r["kind"], "actor": r["actor"],
-        "can_view": can_view_board(db, uid(), r["actor_id"], r["actor_public"]),  # their board opens on click
+        "id": r["id"], "kind": r["kind"], "actor": r["actor"], "link": link(r),
+        "on_your_album": r["owner_id"] == uid(), "album_owner": r["owner"],
         "album_title": r["album_title"], "album_cover": cover_url(r["album_cover"]),
         "created_at": r["created_at"], "read": r["read_at"] is not None,
     } for r in rows]
@@ -874,6 +892,85 @@ def mark_notifications_read():
     db.execute("UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL", (time.time(), uid()))
     db.commit()
     return jsonify(unread=0)
+
+
+# ---------------------------------------------------------------- comments
+
+COMMENT_LIMIT = 500
+
+
+def album_with_owner(db, album_id):
+    row = db.execute(
+        "SELECT albums.id, albums.title, albums.cover, albums.user_id, users.username AS owner, users.is_public "
+        "FROM albums JOIN users ON users.id = albums.user_id WHERE albums.id = ?", (album_id,)).fetchone()
+    if row is None:
+        abort(404, "Album not found.")
+    return row
+
+
+def comment_access(db, album):
+    """(can read, can post). Anyone who can see the board can read; only its owner and their friends can post."""
+    me = current_user()
+    mine = me is not None and me["id"] == album["user_id"]
+    friend = me is not None and not mine and relation(db, me["id"], album["user_id"])[0] == "friend"
+    return bool(album["is_public"]) or mine or friend, mine or friend
+
+
+@app.get("/api/albums/<int:album_id>/comments")
+def list_comments(album_id):
+    db = get_db()
+    album = album_with_owner(db, album_id)
+    can_read, can_post = comment_access(db, album)
+    if not can_read:
+        abort(404, "Album not found.")
+    me = current_user()
+    rows = db.execute(
+        "SELECT c.id, c.body, c.created_at, c.user_id, u.username FROM comments c JOIN users u ON u.id = c.user_id "
+        "WHERE c.album_id = ? ORDER BY c.created_at", (album_id,)).fetchall()
+    return jsonify(
+        owner=album["owner"], can_post=can_post, now=time.time(),
+        comments=[{"id": r["id"], "author": r["username"], "body": r["body"], "created_at": r["created_at"],
+                   "is_owner": r["user_id"] == album["user_id"],
+                   "can_delete": me is not None and me["id"] in (r["user_id"], album["user_id"])} for r in rows])
+
+
+@app.post("/api/albums/<int:album_id>/comments")
+@login_required
+def add_comment(album_id):
+    db = get_db()
+    album = album_with_owner(db, album_id)
+    _, can_post = comment_access(db, album)
+    if not can_post:
+        abort(404, "Only friends can comment on this album.")
+    body = ((request.get_json(silent=True) or {}).get("body") or "").strip()
+    if not body:
+        abort(400, "Write something first.")
+    if len(body) > COMMENT_LIMIT:
+        abort(400, f"Comments can be up to {COMMENT_LIMIT} characters.")
+    now = time.time()
+    cur = db.execute("INSERT INTO comments (album_id, user_id, body, created_at) VALUES (?, ?, ?, ?)",
+                     (album_id, uid(), body, now))
+    # tell the album's owner and everyone else who has commented on it (not the person writing)
+    earlier = {r["user_id"] for r in db.execute("SELECT DISTINCT user_id FROM comments WHERE album_id = ?", (album_id,)).fetchall()}
+    recipients = ({album["user_id"]} | earlier) - {uid()}
+    notify(db, sorted(recipients), uid(), "comment", {"id": album_id, "title": album["title"], "cover": album["cover"]})
+    db.commit()
+    return jsonify(id=cur.lastrowid, author=current_user()["username"], body=body, created_at=now,
+                   is_owner=uid() == album["user_id"], can_delete=True), 201
+
+
+@app.delete("/api/comments/<int:comment_id>")
+@login_required
+def delete_comment(comment_id):
+    """The person who wrote it, or the album's owner, can delete a comment."""
+    db = get_db()
+    row = db.execute("SELECT c.id, c.user_id, a.user_id AS owner_id FROM comments c JOIN albums a ON a.id = c.album_id "
+                     "WHERE c.id = ?", (comment_id,)).fetchone()
+    if row is None or uid() not in (row["user_id"], row["owner_id"]):
+        abort(404, "Comment not found.")
+    db.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+    db.commit()
+    return "", 204
 
 
 @app.put("/api/order")

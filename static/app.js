@@ -63,7 +63,14 @@
     state.albums = new Map(data.albums.map(a => [a.id, a]));
     state.ready = true;
     renderDashboard();
+    openFromHash();
   }
+  // A link like /amy#album-12 opens that album (notifications link straight to the album).
+  function openFromHash() {
+    const m = location.hash.match(/^#album-(\d+)$/);
+    if (m && state.albums.has(Number(m[1])) && state.openId !== Number(m[1])) openAlbum(Number(m[1]));
+  }
+  window.addEventListener("hashchange", openFromHash);
 
   function albumAvg(a) {
     const rs = a.songs.map(s => s.rating).filter(r => typeof r === "number");
@@ -404,6 +411,7 @@
   // Each window sets ov.onEscape to its own close step, so the album view still saves pending scores.
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (document.activeElement?.id === "commentBox" && document.activeElement.value.trim()) { document.activeElement.blur(); return; }
     const ov = document.querySelector(".overlay");
     if (ov?.onEscape) { e.preventDefault(); ov.onEscape(); }
   });
@@ -506,6 +514,11 @@
       </div>
       <div class="tracks" id="tracks"></div>
       ${RO ? "" : `<p class="tip">'Enter' key moves to the next song's score. Scores run up to 10, halves allowed.</p>`}
+      <section class="comments" aria-labelledby="commentsH">
+        <h4 id="commentsH">Comments</h4>
+        <div id="commentList"><p class="panel-empty">Loading comments…</p></div>
+        <div id="commentForm"></div>
+      </section>
       <div class="sheet-foot" id="foot">
         ${RO ? "<span></span>" : `<button class="btn danger" type="button" id="delAlbum">Delete album</button>`}
         <button class="btn primary" type="button" id="doneAlbum">Done</button>
@@ -513,10 +526,14 @@
     document.body.appendChild(ov);
     renderTracks(); renderStats();
 
-    const close = () => { flushSongs(); state.openId = null; closeOverlay(); renderDashboard(); };
+    const close = () => {
+      flushSongs(); state.openId = null; closeOverlay(); renderDashboard();
+      if (/^#album-\d+$/.test(location.hash)) history.replaceState(null, "", location.pathname);  // don't reopen on reload
+    };
     ov.addEventListener("mousedown", e => { if (e.target === ov) close(); });
     $("#closeAlbum").onclick = close; $("#doneAlbum").onclick = close;
     ov.onEscape = close;
+    loadComments(a);
     if (RO) return;
     if (!a.year) fillInYear(a);
     a._compare = null; a._comparing = false;
@@ -537,6 +554,59 @@
     };
     if (focusFirst) setTimeout(() => document.querySelector(".track .rate")?.focus(), 0);
   }
+
+  // ---------- comments on an album ----------
+  // The board's owner and their friends can comment; anyone who can see the board can read them.
+  async function loadComments(a) {
+    let data;
+    try { data = await api("GET", `/api/albums/${a.id}/comments`, undefined, { quiet: true }); }
+    catch (_) { if ($("#commentList")) $("#commentList").innerHTML = `<p class="panel-empty">Comments couldn't load.</p>`; return; }
+    if (state.openId !== a.id) return;
+    a._comments = data;
+    renderComments(a);
+    const form = $("#commentForm");
+    if (!data.can_post) { form.innerHTML = `<p class="panel-empty">Only ${esc(data.owner)} and their friends can comment.</p>`; return; }
+    form.innerHTML = `<div class="comment-box">
+        <textarea class="text" id="commentBox" rows="2" maxlength="500" placeholder="Add a comment…" aria-label="Write a comment"></textarea>
+        <div class="comment-actions"><span class="comment-count" id="commentCount">0/500</span>
+          <button class="btn primary small" type="button" id="commentPost" disabled>Post</button></div></div>`;
+    const box = $("#commentBox"), post = $("#commentPost");
+    box.addEventListener("input", () => { $("#commentCount").textContent = `${box.value.length}/500`; post.disabled = !box.value.trim(); });
+    box.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); post.click(); } });
+    post.addEventListener("click", async () => {
+      const body = box.value.trim(); if (!body) return;
+      post.disabled = true;
+      try {
+        const c = await api("POST", `/api/albums/${a.id}/comments`, { body });
+        a._comments.comments.push(c); a._comments.now = Date.now() / 1000;
+        box.value = ""; $("#commentCount").textContent = "0/500";
+        renderComments(a);
+        $("#commentList").lastElementChild?.scrollIntoView({ block: "nearest" });
+      } catch (_) { post.disabled = false; }
+    });
+  }
+  function renderComments(a) {
+    const list = $("#commentList"), data = a._comments; if (!list || !data) return;
+    $("#commentsH").textContent = data.comments.length ? `Comments (${data.comments.length})` : "Comments";
+    list.innerHTML = data.comments.length ? `<ul class="comment-list">${data.comments.map(c => `<li data-id="${c.id}">
+        ${avatar(c.author)}<div class="comment-main">
+          <div class="comment-meta"><b>${esc(c.author)}</b>${c.is_owner ? '<span class="comment-tag">Owner</span>' : ""}
+            <time datetime="${new Date(c.created_at * 1000).toISOString()}">${timeAgo(c.created_at, data.now)}</time></div>
+          <p class="comment-body">${esc(c.body)}</p></div>
+        ${c.can_delete ? `<button class="icon-btn comment-del" type="button" data-del-comment="${c.id}" aria-label="Delete comment" title="Delete">✕</button>` : ""}
+      </li>`).join("")}</ul>` : `<p class="panel-empty">No comments yet.${data.can_post ? " Say what you think of it." : ""}</p>`;
+  }
+  // deleting asks first: the first click turns the ✕ into "Delete?"
+  document.addEventListener("click", async e => {
+    const b = e.target.closest("[data-del-comment]"); if (!b) return;
+    const a = state.albums.get(state.openId); if (!a?._comments) return;
+    if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Delete?"; b.classList.add("confirming"); return; }
+    try {
+      await api("DELETE", `/api/comments/${b.dataset.delComment}`);
+      a._comments.comments = a._comments.comments.filter(c => c.id !== Number(b.dataset.delComment));
+      renderComments(a);
+    } catch (_) { }
+  });
 
   // Albums added before release years were saved: look the year up once and keep it. Albums that
   // remember Apple's ID are looked up by it; older ones by an exact match on title and artist.
@@ -743,7 +813,10 @@
   function noteText(n) {
     const who = `<b>${esc(n.actor)}</b>`, album = `<b>${esc(n.album_title || "an album")}</b>`;
     return { friend_request: `${who} sent you a friend request`, friend_accepted: `${who} accepted your friend request`,
-             album_added: `${who} added ${album} to their shelf`, album_edited: `${who} rated songs on ${album}` }[n.kind] || who;
+             album_added: `${who} added ${album} to their shelf`, album_edited: `${who} rated songs on ${album}`,
+             comment: n.on_your_album ? `${who} commented on your album ${album}`
+               : n.album_owner === n.actor ? `${who} replied on their album ${album}`
+               : `${who} also commented on ${n.album_owner ? `${esc(n.album_owner)}'s album ` : ""}${album}` }[n.kind] || who;
   }
   async function openNotifications() {
     closeOverlay();
@@ -762,7 +835,7 @@
     $("#notesList").innerHTML = list.length ? `<ul class="panel-list">${list.map((n, i) => {
       const thumb = n.album_cover ? `<img class="note-thumb" src="${esc(smallCover(n.album_cover))}" alt="">`
         : n.album_title ? `<span class="note-thumb" aria-hidden="true"></span>` : avatar(n.actor);
-      const goes = n.kind === "friend_request" || n.can_view;
+      const goes = n.kind === "friend_request" || !!n.link;
       return `<li class="${goes ? "clickable" : ""}" data-i="${i}" ${goes ? 'tabindex="0" role="button"' : ""}>${thumb}
         <span class="note">${noteText(n)}<time datetime="${new Date(n.created_at * 1000).toISOString()}">${timeAgo(n.created_at, data.now)}</time></span>
         ${n.read ? "" : '<span class="note-unread" title="New"></span>'}</li>`;
@@ -770,7 +843,10 @@
     const go = li => {
       const n = list[Number(li.dataset.i)];
       if (n.kind === "friend_request") openFriends();
-      else if (n.can_view) location.href = `/${encodeURIComponent(n.actor)}`;
+      else if (n.link) {
+        closeOverlay();
+        location.href = n.link;  // same page with a new #album-… just opens that album
+      }
     };
     $("#notesList").addEventListener("click", e => { const li = e.target.closest("li.clickable"); if (li) go(li); });
     $("#notesList").addEventListener("keydown", e => { const li = e.target.closest("li.clickable"); if (li && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(li); } });
