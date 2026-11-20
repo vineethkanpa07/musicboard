@@ -47,7 +47,7 @@ header.top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: ce
 header.top::before { content: ""; }
 .brand { text-align: center; min-width: 0; }
 .brand h1 { font-family: var(--title); font-weight: 800; font-size: clamp(40px, 8vw, 84px); letter-spacing: -.03em; line-height: 1; margin: 0; text-wrap: balance; }
-.brand p { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+.brand p { margin: 10px 0 0; color: var(--muted); font-size: 16px; }
 .brand .summary { margin-top: 4px; font-family: var(--mono); font-size: 12px; }
 .brand .summary:empty { display: none; }
 .top-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
@@ -68,7 +68,7 @@ header.top::before { content: ""; }
 /* scale legend */
 .scale { display: flex; align-items: center; gap: 10px; padding-block: 14px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; flex-wrap: wrap; }
 .scale-cells { display: flex; gap: 4px; flex-wrap: wrap; }
-.scale-cells span { width: 30px; height: 26px; border-radius: 5px; display: grid; place-items: center; font-family: var(--mono); font-size: 14px; font-weight: 700; color: #000; letter-spacing: 0; }
+.scale-cells span { width: 30px; height: 26px; border-radius: 5px; display: grid; place-items: center; font-family: var(--mono); font-size: 14px; font-weight: 800; color: #000 !important; -webkit-text-fill-color: #000; letter-spacing: 0; }
 .status { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 13px; }
 
 /* shelves */
@@ -87,7 +87,7 @@ header.top::before { content: ""; }
 .card:hover .sleeve { transform: translateY(-3px); }
 .sleeve img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .sleeve .ph { width: 100%; height: 100%; display: grid; place-items: center; font-family: var(--display); font-weight: 800; font-size: 44px; color: var(--muted); background: repeating-radial-gradient(circle at 50% 50%, var(--surface-2) 0 3px, var(--surface) 3px 5px); }
-.avg { position: absolute; right: 8px; bottom: 8px; font-family: var(--mono); font-weight: 700; font-size: 14px; padding: 3px 8px; border-radius: 6px; color: #000; box-shadow: 0 1px 4px rgb(0 0 0 / .25); }
+.avg { position: absolute; right: 8px; bottom: 8px; font-family: var(--mono); font-weight: 700; font-size: 14px; padding: 3px 8px; border-radius: 6px; color: #000 !important; box-shadow: 0 1px 4px rgb(0 0 0 / .25); }
 .card-title { font-weight: 600; font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
 .card-sub { color: var(--muted); font-size: 12px; font-family: var(--mono); margin-top: -4px; }
 .mini-bar { display: flex; gap: 2px; height: 5px; border-radius: 3px; overflow: hidden; }
@@ -137,7 +137,7 @@ header.top::before { content: ""; }
 .stats { display: flex; gap: 18px; margin-top: auto; padding-top: 12px; flex-wrap: wrap; align-items: end; }
 .stat .k { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 .stat .v { font-family: var(--mono); font-weight: 700; font-size: 22px; }
-.big-avg { padding: 2px 10px; border-radius: 8px; color: #000; display: inline-block; }
+.big-avg { padding: 2px 10px; border-radius: 8px; color: #000 !important; display: inline-block; }
 .sheet { position: relative; }
 .close-x { position: absolute; top: 12px; right: 12px; z-index: 1; }
 .album-head { padding-right: 56px; }
@@ -150,7 +150,7 @@ header.top::before { content: ""; }
 .track .name:hover { border-color: var(--line); }
 .track .name:focus { border-color: var(--accent); outline: none; background: var(--bg); }
 .rate { width: 64px; height: 38px; border-radius: 8px; border: 1px solid var(--line); text-align: center; font-family: var(--mono); font-weight: 700; font-size: 16px; background: var(--bg); color: var(--fg); font-variant-numeric: tabular-nums; }
-.rate.filled { border-color: transparent; color: #000; }
+.rate.filled { border-color: transparent; color: #000 !important; -webkit-text-fill-color: #000; font-weight: 800; }
 .rate:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rate::placeholder { color: var(--muted); font-weight: 500; }
 .del { width: 32px; height: 32px; border: none; background: none; color: var(--muted); border-radius: 6px; font-size: 18px; }

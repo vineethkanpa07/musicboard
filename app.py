@@ -169,6 +169,18 @@ def json_error(err):
 
 # ---------------------------------------------------------------- pages
 
+@app.context_processor
+def asset_helpers():
+    def asset(filename):
+        """Static file URL that changes whenever the file changes, so browsers never use a stale copy."""
+        try:
+            version = int((BASE_DIR / "static" / filename).stat().st_mtime)
+        except OSError:
+            version = 0
+        return f"/static/{filename}?v={version}"
+    return {"asset": asset}
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
