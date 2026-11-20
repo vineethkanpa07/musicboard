@@ -9,7 +9,7 @@
     <header class="top">
       <div class="top-left">
         {% if mode == "owner" %}
-          <span class="who">@{{ me.username }}</span>
+          <span class="who">{{ me.username }}'s Shelf</span>
           <form method="post" action="{{ url_for('logout') }}"><button class="link-btn" type="submit">Log out</button></form>
         {% elif me and me.id == page_user.id %}
           <a class="link-btn" href="{{ url_for('index') }}">← Back to editing</a>
