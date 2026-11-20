@@ -1,0 +1,11 @@
+# your albums and covers live here; keep them out of git
+instance/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# editors / OS
+.DS_Store
