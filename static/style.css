@@ -242,3 +242,19 @@ a.link-btn { color: var(--muted); }
   background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
 .top-pick:hover { border-color: var(--muted); }
+
+/* Top albums: the 5 highest-rated, above the shelves */
+.top-albums { padding-top: 22px; padding-bottom: 8px; }
+.top-albums h2 { font-family: var(--display); font-weight: 700; font-size: 25px; letter-spacing: -.02em; margin: 0 0 12px; }
+.top-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 18px; }
+.top-item { background: none; border: none; padding: 0; text-align: left; display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; }
+.top-item:hover .sleeve { transform: translateY(-3px); }
+.rank { position: absolute; left: 8px; top: 8px; min-width: 30px; height: 30px; padding: 0 8px; border-radius: 15px; display: grid; place-items: center;
+  background: rgb(0 0 0 / .72); color: #fff; font-weight: 800; font-size: 15px; line-height: 1; box-shadow: 0 1px 4px rgb(0 0 0 / .3); }
+.top-albums .card-sub { overflow-wrap: anywhere; }
+/* narrower screens: a sideways-scrolling row instead of squeezing five covers */
+@media (max-width: 760px) {
+  .top-list { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(140px, 42%); overflow-x: auto;
+    scroll-snap-type: x mandatory; padding-bottom: 6px; }
+  .top-list > li { scroll-snap-align: start; }
+}

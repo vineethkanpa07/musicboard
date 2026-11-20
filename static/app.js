@@ -111,6 +111,31 @@
       <div class="card-sub">${plural(songs.length, "track")}</div>
     </button>`;
   }
+  // The 5 highest-rated albums. Ties (on the average as shown, e.g. 8.3) go to the newer release,
+  // then to the album added more recently.
+  function topAlbums() {
+    return [...state.albums.values()]
+      .map(a => ({ a, avg: albumAvg(a) }))
+      .filter(x => x.avg != null)
+      .sort((x, y) => Number(fmtAvg(y.avg)) - Number(fmtAvg(x.avg))
+        || (y.a.year || 0) - (x.a.year || 0)
+        || (y.a.created_at || 0) - (x.a.created_at || 0))
+      .slice(0, 5);
+  }
+  function renderTopAlbums() {
+    const box = $("#topAlbums"), top = topAlbums();
+    box.hidden = !top.length;
+    if (!top.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<h2 id="topAlbumsH">Top albums</h2>
+      <ol class="top-list">${top.map(({ a, avg }, i) => `<li>
+        <button class="top-item" type="button" data-id="${a.id}" aria-label="Number ${i + 1}: ${esc(a.title)} by ${esc(a.artist)}, average ${fmtAvg(avg)}">
+          <div class="sleeve">${sleeveHtml(a)}<span class="rank" aria-hidden="true">${i + 1}</span>
+            <span class="avg" style="background:${ratingColor(avg)}">${fmtAvg(avg)}</span></div>
+          <div class="card-title">${esc(a.title)}</div>
+          <div class="card-sub">${esc(a.artist)}${a.year ? ` · ${a.year}` : ""}</div>
+        </button></li>`).join("")}</ol>`;
+  }
+
   function renderDashboard() {
     const el = $("#shelves");
     const arrangeBtn = $("#arrangeBtn");
@@ -128,6 +153,7 @@
       ? `${plural(state.albums.size, "album")} · ${plural(gs.length, "artist")} · ${plural(rated, "track")} rated`
       : "";
     setStatus(RO ? "View only" : state.arrange ? "Drag albums or artists, or use the arrows." : "Saved automatically");
+    renderTopAlbums();
 
     if (!state.albums.size && RO) {
       el.innerHTML = `<div class="empty"><h2>Nothing on the shelf yet</h2><p>@${esc(MB.username)} hasn't added any albums.</p></div>`;
@@ -294,6 +320,10 @@
     renderDashboard();
   });
 
+  $("#topAlbums").addEventListener("click", e => {
+    const item = e.target.closest(".top-item");
+    if (item) openAlbum(Number(item.dataset.id));
+  });
   $("#arrangeBtn")?.addEventListener("click", () => { state.arrange = !state.arrange; renderDashboard(); });
   $("#addAlbumBtn")?.addEventListener("click", openAddAlbum);
 
