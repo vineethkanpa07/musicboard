@@ -278,6 +278,7 @@ def album_json(db, row):
         "created_at": row["created_at"],
         "songs": [dict(s) for s in songs],
         "top_song_id": row["top_song_id"],
+        "itunes_id": row["itunes_id"],
     }
 
 
@@ -316,6 +317,7 @@ def library_for(db, user_id):
 
 @app.errorhandler(400)
 @app.errorhandler(404)
+@app.errorhandler(409)
 @app.errorhandler(413)
 def json_error(err):
     message = getattr(err, "description", "Request failed.")
@@ -418,6 +420,17 @@ def clean_text(value, limit=300):
     return " ".join(str(value or "").split())[:limit]
 
 
+def already_on_shelf(db, itunes_id, title, artist):
+    """The same Apple album, or (for albums added before IDs were saved) the same title by the same artist."""
+    if db.execute("SELECT 1 FROM albums WHERE user_id = ? AND itunes_id = ?", (uid(), itunes_id)).fetchone():
+        return True
+    return db.execute(
+        "SELECT 1 FROM albums JOIN artists ON artists.id = albums.artist_id "
+        "WHERE albums.user_id = ? AND albums.itunes_id IS NULL AND LOWER(albums.title) = LOWER(?) AND artists.key = ?",
+        (uid(), title, artist_key(artist)),
+    ).fetchone() is not None
+
+
 @app.post("/api/albums/import")
 @login_required
 def import_album():
@@ -425,10 +438,15 @@ def import_album():
 
     The search runs in the visitor's browser (so Apple's rate limit is per visitor, not shared by
     the whole site), and the browser sends the album it looked up:
-    {"title": ..., "artist": ..., "artwork": "https://...mzstatic.com/...", "tracks": ["Song", ...]}
+    {"id": <Apple's album ID>, "title": ..., "artist": ..., "artwork": "https://...mzstatic.com/...",
+     "tracks": ["Song", ...]}
     """
     data = request.get_json(silent=True) or {}
     title, artist = clean_text(data.get("title")), clean_text(data.get("artist"))
+    try:
+        itunes_id = int(data.get("id"))
+    except (TypeError, ValueError):
+        abort(400, "Pick an album from the search results.")
     tracks = data.get("tracks")
     if not title or not artist or not isinstance(tracks, list) or len(tracks) > 300:
         abort(400, "Pick an album from the search results.")
@@ -437,10 +455,12 @@ def import_album():
     if artwork and not ARTWORK_URL_RE.match(artwork):
         artwork = None  # only Apple's artwork links are used as covers
     db = get_db()
+    if already_on_shelf(db, itunes_id, title, artist):
+        abort(409, f"{title} is already on your shelf.")
     artist_id = find_or_create_artist(db, uid(), artist)
     cur = db.execute(
-        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (uid(), title, artist_id, artwork, next_album_position(db, artist_id), time.time()),
+        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at, itunes_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (uid(), title, artist_id, artwork, next_album_position(db, artist_id), time.time(), itunes_id),
     )
     album_id = cur.lastrowid
     db.executemany(

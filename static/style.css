@@ -225,7 +225,8 @@ a.link-btn { color: var(--muted); }
 .results-note { margin: 0; color: var(--muted); font-size: 14px; padding: 6px 0; }
 .result { display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid transparent; border-radius: 8px; background: none; text-align: left; width: 100%; }
 .result:hover, .result:focus-visible { background: var(--surface-2); }
-.result:disabled { cursor: default; opacity: .5; }
+.result:disabled { cursor: not-allowed; opacity: .5; }
+.result:disabled:hover { background: none; }
 .result.loading { opacity: 1; background: var(--surface-2); }
 .result img, .result-ph { width: 48px; height: 48px; border-radius: 4px; flex: none; object-fit: cover; background: var(--surface-2); }
 .result-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }

@@ -351,7 +351,7 @@
     if (!album) throw new SearchError("That album couldn't be found anymore. Try searching again.");
     const tracks = found.filter(r => r.wrapperType === "track" && (r.kind || "song") === "song")
       .sort((a, b) => (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0));
-    return { title: album.collectionName || "Untitled", artist: album.artistName || "Unknown artist",
+    return { id: album.collectionId, title: album.collectionName || "Untitled", artist: album.artistName || "Unknown artist",
              artwork: album.artworkUrl100 || null, tracks: tracks.map(t => (t.trackName || "").trim()) };
   }
 
@@ -374,15 +374,17 @@
     $("#newCancel").onclick = closeOverlay;
 
     // --- search ---
+    // Already added: the same Apple album, or (for albums added before IDs were saved) same title and artist.
+    const same = (x, y) => x.trim().toLowerCase() === y.trim().toLowerCase();
     const onShelf = r => [...state.albums.values()].some(a =>
-      a.title.trim().toLowerCase() === r.title.trim().toLowerCase() && a.artist.trim().toLowerCase() === r.artist.trim().toLowerCase());
+      a.itunes_id ? a.itunes_id === r.id : same(a.title, r.title) && same(a.artist, r.artist));
     let searchTimer = null, searchCtl = null, lastResults = [];
     const resultsEl = $("#searchResults");
     function showResults(results, q) {
       lastResults = results;
       if (!q) { resultsEl.innerHTML = ""; return; }
       if (!results.length) { resultsEl.innerHTML = `<p class="results-note">No albums found for “${esc(q)}”. Try different words, like the album and the artist's name.</p>`; return; }
-      resultsEl.innerHTML = results.map((r, i) => `<button class="result" type="button" data-i="${i}">
+      resultsEl.innerHTML = results.map((r, i) => `<button class="result" type="button" data-i="${i}" ${onShelf(r) ? 'disabled title="Already on your shelf"' : ""}>
         ${r.artwork ? `<img src="${esc(r.artwork)}" alt="" loading="lazy">` : `<span class="result-ph"></span>`}
         <span class="result-text"><span class="result-title">${esc(r.title)}${r.explicit ? ' <span class="e-badge" title="Explicit">E</span>' : ""}</span>
           <span class="result-sub">${esc(r.artist)}${r.year ? ` · ${esc(r.year)}` : ""}${r.tracks ? ` · ${plural(r.tracks, "track")}` : ""}</span></span>
@@ -405,7 +407,7 @@
       }, 300);
     });
     $("#albumSearch").addEventListener("keydown", e => {
-      if (e.key === "Enter") { e.preventDefault(); resultsEl.querySelector(".result")?.click(); }
+      if (e.key === "Enter") { e.preventDefault(); resultsEl.querySelector(".result:not(:disabled)")?.click(); }
     });
     resultsEl.addEventListener("click", async e => {
       const btn = e.target.closest(".result"); if (!btn || btn.disabled) return;
