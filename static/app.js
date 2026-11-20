@@ -341,7 +341,7 @@
       </div>
       <div class="tracks" id="tracks"></div>
       <button class="add-song" type="button" id="addSong"><b>+</b> Add song</button>
-      <p class="tip">'Enter' key moves from the song name to its score, then to a new song. Scores run 0.5 to 10, halves allowed.</p>
+      <p class="tip">'Enter' key moves from the song name to its score, then to a new song. Scores run up to 10, halves allowed.</p>
       <div class="sheet-foot" id="foot">
         <button class="btn danger" type="button" id="delAlbum">Delete album</button>
         <button class="btn primary" type="button" id="doneAlbum">Done</button>
