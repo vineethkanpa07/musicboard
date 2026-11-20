@@ -133,6 +133,8 @@
       return `<section class="group" data-group="${g.id}" ${state.arrange ? 'draggable="true"' : ""}>
         <div class="group-head">
           <h2>${esc(g.name)}</h2>
+          ${RO || state.arrange ? "" : `<button class="icon-btn rename-btn" type="button" data-act="rename" data-key="${g.id}" aria-label="Rename ${esc(g.name)}" title="Rename artist">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M13.5 6.5l4 4" stroke="currentColor" stroke-width="2"/></svg></button>`}
           <span class="meta">${plural(g.albums.length, "album")}${gAvg ? ` · avg ${gAvg}` : ""}</span>
           ${state.arrange ? `<div class="group-tools">
             <button class="icon-btn" type="button" data-act="gup" data-key="${g.id}" ${gi === 0 ? "disabled" : ""} aria-label="Move ${esc(g.name)} up">▲</button>
@@ -141,6 +143,35 @@
         <div class="grid">${g.albums.map((a, ai) => cardHtml(a, ai, g.albums.length)).join("")}</div>
       </section>`;
     }).join("");
+  }
+
+  // ---------- renaming an artist ----------
+  function startRename(head, artistId) {
+    const artist = state.artists.find(a => a.id === artistId); if (!artist || !head) return;
+    const h2 = head.querySelector("h2");
+    head.querySelector(".rename-btn").hidden = true;
+    const input = document.createElement("input");
+    input.className = "text rename-input"; input.value = artist.name; input.setAttribute("aria-label", "Artist name");
+    h2.replaceWith(input); input.focus(); input.select();
+    let done = false;
+    const finish = async save => {
+      if (done) return; done = true;
+      const name = input.value.trim();
+      if (!save || !name || name === artist.name) { renderDashboard(); return; }
+      input.disabled = true;
+      try {
+        const lib = await api("PATCH", `/api/artists/${artistId}`, { name });
+        state.artists = lib.artists;
+        state.albums = new Map(lib.albums.map(a => [a.id, a]));
+        toast(`Renamed to ${name}`);
+      } catch (_) { }
+      renderDashboard();
+    };
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
   }
 
   // ---------- reordering ----------
@@ -191,6 +222,7 @@
       if (a === "right") shiftAlbum(Number(act.dataset.id), 1);
       if (a === "gup") shiftGroup(Number(act.dataset.key), -1);
       if (a === "gdown") shiftGroup(Number(act.dataset.key), 1);
+      if (a === "rename") startRename(act.closest(".group-head"), Number(act.dataset.key));
       return;
     }
     const card = e.target.closest(".card");
@@ -287,7 +319,7 @@
     ov.innerHTML = `<form class="sheet small" role="dialog" aria-modal="true" aria-labelledby="addH">
       <div class="sheet-body">
         <h3 id="addH">New album</h3>
-        <div class="field"><label for="albumSearch">Search for an album</label>
+        <div class="field" id="searchField"><label for="albumSearch">Search for an album</label>
           <input class="text" id="albumSearch" type="search" autocomplete="off" placeholder="Album or artist, e.g. Blonde Frank Ocean"></div>
         <div class="results" id="searchResults" aria-live="polite"></div>
         <button class="link-btn manual-toggle" type="button" id="manualToggle">Can't find it? Add it yourself</button>
@@ -374,8 +406,10 @@
       } catch (_) { showResults(lastResults, $("#albumSearch").value.trim()); }
     });
     $("#manualToggle").onclick = () => {
+      const typed = $("#albumSearch").value.trim();
       $("#manualFields").hidden = false; $("#newSubmit").hidden = false; $("#manualToggle").hidden = true;
-      $("#newTitle").value = $("#albumSearch").value.trim(); $("#newTitle").focus();
+      $("#searchField").hidden = true; resultsEl.hidden = true; searchCtl?.abort(); clearTimeout(searchTimer);
+      $("#newTitle").value = typed; $("#newTitle").focus();
     };
     setTimeout(() => $("#albumSearch").focus(), 0);
   }

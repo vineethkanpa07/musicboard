@@ -482,6 +482,37 @@ def update_album(album_id):
     return jsonify(album_json(db, get_album_row(db, album_id)))
 
 
+@app.patch("/api/artists/<int:artist_id>")
+@login_required
+def rename_artist(artist_id):
+    """Body: {"name": "New name"}. Every album by this artist shows the new name.
+    Renaming to an artist you already have merges the two into one row."""
+    db = get_db()
+    artist = db.execute("SELECT * FROM artists WHERE id = ? AND user_id = ?", (artist_id, uid())).fetchone()
+    if artist is None:
+        abort(404, "Artist not found.")
+    name = " ".join(((request.get_json(silent=True) or {}).get("name") or "").split())
+    if not name:
+        abort(400, "Artist name can't be empty.")
+    key = artist_key(name)
+    other = db.execute(
+        "SELECT id FROM artists WHERE user_id = ? AND key = ? AND id != ?", (uid(), key, artist_id)
+    ).fetchone()
+    if other:
+        start = next_album_position(db, other["id"])
+        albums = db.execute(
+            "SELECT id FROM albums WHERE artist_id = ? ORDER BY position, created_at", (artist_id,)
+        ).fetchall()
+        for i, a in enumerate(albums):
+            db.execute("UPDATE albums SET artist_id = ?, position = ? WHERE id = ?", (other["id"], start + i, a["id"]))
+        db.execute("UPDATE artists SET name = ? WHERE id = ?", (name, other["id"]))
+        db.execute("DELETE FROM artists WHERE id = ?", (artist_id,))
+    else:
+        db.execute("UPDATE artists SET name = ?, key = ? WHERE id = ?", (name, key, artist_id))
+    db.commit()
+    return jsonify(library_for(db, uid()))
+
+
 @app.post("/api/albums/<int:album_id>/cover")
 @login_required
 def replace_cover(album_id):
