@@ -608,6 +608,11 @@ def rank_albums(items, query, song_hits=None):
         points = sum(2 for w in words if w in title) + sum(1 for w in words if w in artist)
         if words and all(w in title or w in artist for w in words):
             points += 3  # every word of the search is in the title or artist
+        bare_title = " ".join(re.findall(r"\w+", re.sub(r"[(\[].*?[)\]]", "", title)))  # drop "(Deluxe)" etc.
+        typed = " ".join(words)
+        typed_without_artist = " ".join(w for w in words if w not in artist.split())
+        if bare_title and bare_title in (typed, typed_without_artist):
+            points += 3  # the title is exactly what you typed (with or without the artist's name)
         if any(j in title and j not in query.lower() for j in JUNK_WORDS):
             points -= 5
         points += min(3, (song_hits or {}).get(r.get("collectionId"), 0))  # several matching songs = likely the one you mean
