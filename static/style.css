@@ -196,10 +196,10 @@ img { max-width: 100%; }
 
 /* account bar, visibility and sharing */
 /* Name, then "Log out" under it. Like the buttons on the right, only the first line is centered on the row. */
-.top-left { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 14px; line-height: 20px; color: var(--muted);
-  margin-bottom: calc(-1 * (6px + 20px)); }
+.top-left { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 20px; color: var(--muted);
+  margin-bottom: calc(-1 * (10px + var(--add-btn-h))); }  /* second row (the two buttons) hangs below, like Add Album on the right */
 .top-left > :only-child { margin-bottom: 0; }
-@media (max-width: 640px) { .top-left { flex-direction: row; align-items: center; gap: 12px; margin-bottom: 0; } }
+@media (max-width: 640px) { .top-left { align-items: center; margin-bottom: 0; } }
 .top-left form { margin: 0; }
 .who { font-family: var(--mono); color: var(--fg); }
 .link-btn { background: none; border: none; padding: 0; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; font-size: 14px; }
@@ -266,13 +266,7 @@ a.link-btn { color: var(--muted); }
 }
 
 /* Friends + notifications */
-.who-row { display: flex; align-items: center; gap: 12px; height: 20px; }
-.bell-btn { position: relative; width: 30px; height: 30px; margin: -5px 0; border: none; background: none; color: var(--muted);
-  border-radius: 8px; display: grid; place-items: center; padding: 0; }
-.bell-btn:hover, .bell-btn:focus-visible { color: var(--fg); background: var(--surface-2); }
-.badge { position: absolute; top: 0; right: -2px; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--danger);
-  color: #fff; font-size: 11px; font-weight: 700; line-height: 17px; text-align: center; box-shadow: 0 0 0 2px var(--bg); }
-.badge.inline { position: static; display: inline-block; margin-left: 6px; box-shadow: none; vertical-align: 1px; text-decoration: none; }
+.who-row { display: flex; align-items: center; gap: 12px; height: 36px; }  /* same height as the Private button */
 .panel-tabs { display: flex; gap: 6px; }
 .panel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .panel-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); min-width: 0; }
@@ -293,3 +287,13 @@ a.link-btn { color: var(--muted); }
 .panel-list li.clickable { cursor: pointer; border-radius: 8px; padding-inline: 8px; margin-inline: -8px; border-bottom-color: transparent; }
 .panel-list li.clickable:hover { background: var(--surface-2); }
 .sheet .scroll { max-height: min(60vh, 520px); overflow-y: auto; margin-inline: -4px; padding-inline: 4px; }
+
+/* Notifications + Friends buttons: same pill style as Private / Arrange, with a red count */
+.social-row { display: flex; gap: 8px; }
+.social-btn { height: var(--add-btn-h); padding: 0 14px; gap: 7px; white-space: nowrap; }
+.social-btn svg { flex: none; }
+.social-btn .badge { min-width: 19px; height: 19px; padding: 0 6px; border-radius: 10px; background: var(--danger); color: #fff;
+  font-size: 11.5px; font-weight: 700; line-height: 19px; text-align: center; }
+.social-btn:has(.badge:not([hidden])) { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+/* not much room beside the big title: the Notifications button shows just its bell and count */
+@media (max-width: 1060px) and (min-width: 641px) { #bellBtn .social-label { display: none; } #bellBtn { padding: 0 11px; } }

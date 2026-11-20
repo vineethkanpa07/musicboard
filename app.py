@@ -371,15 +371,32 @@ def cover(filename):
     return send_from_directory(COVER_DIR, filename)
 
 
+def viewable_user(db, username):
+    """The board owner if the viewer may see it: anyone for a public board, friends for a private one.
+    Everyone else gets the same answer as for a username that doesn't exist."""
+    user = db.execute("SELECT * FROM users WHERE username = ?", ((username or "").lower(),)).fetchone()
+    if user is None:
+        return None
+    if user["is_public"]:
+        return user
+    me = current_user()
+    if me is not None and (me["id"] == user["id"] or relation(db, me["id"], user["id"])[0] == "friend"):
+        return user
+    return None
+
+
+def can_view_board(db, viewer_id, owner_id, owner_public):
+    return bool(owner_public) or viewer_id == owner_id or relation(db, viewer_id, owner_id)[0] == "friend"
+
+
 @app.get("/<username>")
 def public_page(username):
-    """Someone's public page. Private or unknown usernames get the same 'not found' page."""
-    user = get_db().execute(
-        "SELECT * FROM users WHERE username = ? AND is_public = 1", (username.lower(),)
-    ).fetchone()
+    """Someone's board, read-only. Public boards are open to anyone; private ones only to friends."""
+    db = get_db()
+    user = viewable_user(db, username)
     if user is None:
         abort(404)
-    return render_template("index.html", mode="public", page_user=user)
+    return render_template("index.html", mode="public", page_user=user, friends_only=not user["is_public"])
 
 
 # ---------------------------------------------------------------- API
@@ -393,7 +410,7 @@ def library():
 @app.get("/api/u/<username>/library")
 def public_library(username):
     db = get_db()
-    user = db.execute("SELECT id FROM users WHERE username = ? AND is_public = 1", (username.lower(),)).fetchone()
+    user = viewable_user(db, username)
     if user is None:
         abort(404, "This page is private or doesn't exist.")
     return jsonify(library_for(db, user["id"]))
@@ -644,7 +661,8 @@ def search_users():
     results = []
     for r in rows:
         rel, _ = relation(db, uid(), r["id"])
-        results.append({"username": r["username"], "is_public": bool(r["is_public"]), "relation": rel})
+        results.append({"username": r["username"], "is_public": bool(r["is_public"]), "relation": rel,
+                        "can_view": bool(r["is_public"]) or rel == "friend"})
     return jsonify(results=results)
 
 
@@ -660,7 +678,8 @@ def list_friends():
     ).fetchall()
     out = {"friends": [], "received": [], "sent": []}
     for r in rows:
-        item = {"id": r["id"], "username": r["username"], "is_public": bool(r["is_public"]), "since": r["created_at"]}
+        item = {"id": r["id"], "username": r["username"], "is_public": bool(r["is_public"]), "since": r["created_at"],
+                "can_view": bool(r["is_public"]) or r["status"] == "accepted"}
         if r["status"] == "accepted":
             out["friends"].append(item)
         else:
@@ -759,7 +778,8 @@ def list_notifications():
         (uid(),),
     ).fetchall()
     items = [{
-        "id": r["id"], "kind": r["kind"], "actor": r["actor"], "actor_public": bool(r["actor_public"]),
+        "id": r["id"], "kind": r["kind"], "actor": r["actor"],
+        "can_view": can_view_board(db, uid(), r["actor_id"], r["actor_public"]),  # their board opens on click
         "album_title": r["album_title"], "album_cover": cover_url(r["album_cover"]),
         "created_at": r["created_at"], "read": r["read_at"] is not None,
     } for r in rows]

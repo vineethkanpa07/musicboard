@@ -12,11 +12,13 @@ Rate every song on the albums you listen to, from 0.5 to 10.
 
 ## Friends and notifications
 
-- Click **Friends** (under your name) to search for people by username and send a friend request.
+- Click **Friends** (next to Notifications, under your name) to search for people by username and send a friend request.
   They can accept or decline it; you can cancel a request or remove a friend at any time.
-- The **bell** next to your name shows unread notifications: friend requests, accepted requests, and
+- **Notifications** (under your name) shows unread notifications: friend requests, accepted requests, and
   when a friend **adds an album** or **rates songs** on one, with the album cover and how long ago.
   Scoring a whole album sends one notification, not one per song.
+- Friends can open each other's boards (read-only) even when they're private. Everyone else only sees
+  boards that are public.
 - The page checks for new notifications every 2 minutes while it's open and visible.
 
 ## Accounts and public pages

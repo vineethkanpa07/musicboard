@@ -713,7 +713,7 @@
     $("#notesList").innerHTML = list.length ? `<ul class="panel-list">${list.map((n, i) => {
       const thumb = n.album_cover ? `<img class="note-thumb" src="${esc(smallCover(n.album_cover))}" alt="">`
         : n.album_title ? `<span class="note-thumb" aria-hidden="true"></span>` : avatar(n.actor);
-      const goes = n.kind === "friend_request" || n.actor_public;
+      const goes = n.kind === "friend_request" || n.can_view;
       return `<li class="${goes ? "clickable" : ""}" data-i="${i}" ${goes ? 'tabindex="0" role="button"' : ""}>${thumb}
         <span class="note">${noteText(n)}<time datetime="${new Date(n.created_at * 1000).toISOString()}">${timeAgo(n.created_at, data.now)}</time></span>
         ${n.read ? "" : '<span class="note-unread" title="New"></span>'}</li>`;
@@ -721,7 +721,7 @@
     const go = li => {
       const n = list[Number(li.dataset.i)];
       if (n.kind === "friend_request") openFriends();
-      else if (n.actor_public) location.href = `/${encodeURIComponent(n.actor)}`;
+      else if (n.can_view) location.href = `/${encodeURIComponent(n.actor)}`;
     };
     $("#notesList").addEventListener("click", e => { const li = e.target.closest("li.clickable"); if (li) go(li); });
     $("#notesList").addEventListener("keydown", e => { const li = e.target.closest("li.clickable"); if (li && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(li); } });
@@ -744,8 +744,10 @@
     ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
     $("#friendsDone").onclick = closeOverlay;
 
-    const personLine = (name, isPublic, extra = "") => `${avatar(name)}<span class="person">${isPublic
-      ? `<a href="/${encodeURIComponent(name)}">${esc(name)}</a>` : esc(name)}<small>${extra || (isPublic ? "Public board" : "Private board")}</small></span>`;
+    // a name links to their board when you can open it: public boards, and any friend's board
+    const personLine = (r, extra = "") => `${avatar(r.username)}<span class="person">${r.can_view
+      ? `<a href="/${encodeURIComponent(r.username)}">${esc(r.username)}</a>` : esc(r.username)}<small>${extra ||
+      (r.is_public ? "Public board" : r.can_view ? "Private board · you can see it as a friend" : "Private board")}</small></span>`;
     const actionFor = r => ({
       none: `<button class="btn small primary" type="button" data-do="request" data-user="${esc(r.username)}">Add friend</button>`,
       request_sent: `<button class="btn small" type="button" data-do="remove" data-user="${esc(r.username)}" title="Cancel request">Requested</button>`,
@@ -760,13 +762,13 @@
       const section = (title, items, render, empty) => `<div class="panel-section"><h4>${title}</h4>${items.length
         ? `<ul class="panel-list">${items.map(render).join("")}</ul>` : `<p class="panel-empty">${empty}</p>`}</div>`;
       box.innerHTML =
-        (f.received.length ? section(`Friend requests (${f.received.length})`, f.received, r => `<li>${personLine(r.username, r.is_public, `Sent ${timeAgo(r.since)}`)}
+        (f.received.length ? section(`Friend requests (${f.received.length})`, f.received, r => `<li>${personLine(r, `Sent ${timeAgo(r.since)}`)}
           <button class="btn small primary" type="button" data-do="accept" data-id="${r.id}">Accept</button>
           <button class="btn small" type="button" data-do="decline" data-id="${r.id}">Decline</button></li>`, "") : "") +
-        section(`Your friends (${f.friends.length})`, f.friends, r => `<li>${personLine(r.username, r.is_public)}
+        section(`Your friends (${f.friends.length})`, f.friends, r => `<li>${personLine(r)}
           <button class="btn small" type="button" data-do="unfriend" data-user="${esc(r.username)}">Remove</button></li>`,
           "No friends yet. Search for someone's username above.") +
-        (f.sent.length ? section("Requests you sent", f.sent, r => `<li>${personLine(r.username, r.is_public, `Waiting since ${timeAgo(r.since)}`)}
+        (f.sent.length ? section("Requests you sent", f.sent, r => `<li>${personLine(r, `Waiting since ${timeAgo(r.since)}`)}
           <button class="btn small" type="button" data-do="remove" data-user="${esc(r.username)}">Cancel</button></li>`, "") : "");
     }
 
@@ -779,7 +781,7 @@
       let res;
       try { res = await api("GET", `/api/users/search?q=${encodeURIComponent(q)}`, undefined, { quiet: true }); } catch (_) { box.innerHTML = `<p class="panel-empty">Search isn't working right now.</p>`; return; }
       if (q !== lastQuery || !$("#userResults")) return;
-      box.innerHTML = res.results.length ? `<ul class="panel-list">${res.results.map(r => `<li>${personLine(r.username, r.is_public)}${actionFor(r)}</li>`).join("")}</ul>`
+      box.innerHTML = res.results.length ? `<ul class="panel-list">${res.results.map(r => `<li>${personLine(r)}${actionFor(r)}</li>`).join("")}</ul>`
         : `<p class="panel-empty">Nobody with a username like “${esc(q)}”.</p>`;
     }
     $("#userSearch").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 250); });
