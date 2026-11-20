@@ -170,3 +170,15 @@ html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; }
 img { max-width: 100%; }
 [hidden] { display: none !important; }
+
+/* the vinyl record standing in for the "o" in the title */
+.vinyl { display: inline-block; width: .74em; height: .74em; margin: 0 .02em; vertical-align: -.035em; }
+.vinyl svg { width: 100%; height: 100%; display: block; animation: spin 2.4s linear infinite; animation-play-state: paused; }
+.brand h1:hover .vinyl svg { animation-play-state: running; }
+.vinyl .disc { fill: var(--fg); }
+.vinyl .grooves circle { stroke: var(--bg); stroke-opacity: .22; stroke-width: 1.2; }
+.vinyl .shine { stroke: var(--bg); stroke-opacity: .35; stroke-width: 3; stroke-linecap: round; }
+.vinyl .hole { fill: var(--bg); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.vinyl svg { transform-origin: 50% 50%; }
+@media (prefers-reduced-motion: reduce) { .vinyl svg { animation: none; } }
