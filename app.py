@@ -1,16 +1,25 @@
 """Musicboard: rate every song on the albums you listen to, 0.5 to 10.
 
+Everyone signs up with a username and password. Albums are private by default;
+switching a page to public makes /<username> show a read-only copy of that
+person's dashboard.
+
 Run with:  python app.py   then open http://127.0.0.1:5000
 """
 
 import math
 import os
+import re
+import secrets
 import sqlite3
 import time
 import uuid
+from functools import wraps
 from pathlib import Path
 
-from flask import Flask, abort, g, jsonify, render_template, request, send_from_directory
+from flask import (Flask, abort, g, jsonify, redirect, render_template, request,
+                   send_from_directory, session, url_for)
+from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MUSICBOARD_DATA", BASE_DIR / "instance"))
@@ -18,21 +27,58 @@ DB_PATH = DATA_DIR / "musicboard.db"
 COVER_DIR = DATA_DIR / "covers"
 ALLOWED_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 
+USERNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_.-]{1,28})[a-z0-9]$")
+# Usernames that would clash with the app's own pages.
+RESERVED_USERNAMES = {
+    "about", "account", "admin", "api", "covers", "help", "login", "logout", "me",
+    "musicboard", "new", "settings", "signup", "static", "u", "user", "users",
+}
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+COVER_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_secret_key():
+    """Signs login cookies. Set MUSICBOARD_SECRET when hosting; otherwise one is created on first run."""
+    if os.environ.get("MUSICBOARD_SECRET"):
+        return os.environ["MUSICBOARD_SECRET"]
+    key_file = DATA_DIR / "secret_key"
+    if not key_file.exists():
+        key_file.write_text(secrets.token_hex(32))
+    return key_file.read_text().strip()
+
+
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB uploads
+app.config.update(
+    MAX_CONTENT_LENGTH=10 * 1024 * 1024,  # 10 MB uploads
+    SECRET_KEY=load_secret_key(),
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_HTTPONLY=True,
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,  # stay logged in for 30 days
+)
 
 
 # ---------------------------------------------------------------- database
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    username       TEXT NOT NULL UNIQUE,
+    password_hash  TEXT NOT NULL,
+    is_public      INTEGER NOT NULL DEFAULT 0,
+    created_at     REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS artists (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id   INTEGER REFERENCES users(id),
     name      TEXT NOT NULL,
-    key       TEXT NOT NULL UNIQUE,
-    position  INTEGER NOT NULL DEFAULT 0
+    key       TEXT NOT NULL,
+    position  INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, key)
 );
 CREATE TABLE IF NOT EXISTS albums (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER REFERENCES users(id),
     title       TEXT NOT NULL,
     artist_id   INTEGER NOT NULL REFERENCES artists(id),
     cover       TEXT,
@@ -64,11 +110,150 @@ def close_db(_exc):
         db.close()
 
 
+def columns(db, table):
+    return {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+
+
 def init_db():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    COVER_DIR.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as db:
+        # Databases from the single-user version have no user_id columns. Upgrade them in place;
+        # their albums are handed to the first account that signs up.
+        existing = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "artists" in existing and "user_id" not in columns(db, "artists"):
+            # Build the new table beside the old one, then swap names, so the albums table's
+            # link to "artists" keeps pointing at the right table.
+            db.executescript("""
+                PRAGMA foreign_keys = OFF;
+                CREATE TABLE artists_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER REFERENCES users(id),
+                    name TEXT NOT NULL, key TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (user_id, key));
+                INSERT INTO artists_new (id, user_id, name, key, position)
+                    SELECT id, NULL, name, key, position FROM artists;
+                DROP TABLE artists;
+                ALTER TABLE artists_new RENAME TO artists;
+            """)
+        if "albums" in existing and "user_id" not in columns(db, "albums"):
+            db.execute("ALTER TABLE albums ADD COLUMN user_id INTEGER REFERENCES users(id)")
         db.executescript(SCHEMA)
+
+
+# ---------------------------------------------------------------- accounts
+
+def current_user():
+    if "user" not in g:
+        uid = session.get("uid")
+        g.user = None
+        if uid is not None:
+            g.user = get_db().execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+            if g.user is None:
+                session.clear()
+    return g.user
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if current_user() is None:
+            if request.path.startswith("/api/"):
+                return jsonify(error="Log in to make changes."), 401
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def uid():
+    return current_user()["id"]
+
+
+def username_problem(name):
+    """Return why a username can't be used, or None if it's fine."""
+    if not USERNAME_RE.match(name):
+        return "Usernames are 3 to 30 characters: lowercase letters, numbers, dots, dashes or underscores, starting and ending with a letter or number."
+    if name in RESERVED_USERNAMES:
+        return "That username is reserved. Pick another one."
+    return None
+
+
+def safe_next(target):
+    return target if target and target.startswith("/") and not target.startswith("//") else url_for("index")
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if current_user():
+        return redirect(url_for("index"))
+    error = None
+    username = (request.form.get("username") or "").strip().lower().lstrip("@")
+    if request.method == "POST":
+        password = request.form.get("password") or ""
+        db = get_db()
+        error = username_problem(username)
+        if error:
+            pass
+        elif len(password) < 8:
+            error = "Use a password of at least 8 characters."
+        elif db.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            error = "That username is taken. Try another one."
+        else:
+            first_user = db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+            cur = db.execute(
+                "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                (username, generate_password_hash(password), time.time()),
+            )
+            if first_user:  # albums saved before accounts existed belong to the first account
+                db.execute("UPDATE artists SET user_id = ? WHERE user_id IS NULL", (cur.lastrowid,))
+                db.execute("UPDATE albums SET user_id = ? WHERE user_id IS NULL", (cur.lastrowid,))
+            db.commit()
+            session.clear()
+            session.permanent = True
+            session["uid"] = cur.lastrowid
+            return redirect(url_for("index"))
+    return render_template("auth.html", mode="signup", error=error, username=username)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user():
+        return redirect(url_for("index"))
+    error = None
+    username = (request.form.get("username") or "").strip().lower().lstrip("@")
+    next_url = request.values.get("next") or ""
+    if request.method == "POST":
+        user = get_db().execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if user is None or not check_password_hash(user["password_hash"], request.form.get("password") or ""):
+            error = "That username and password don't match an account."
+        else:
+            session.clear()
+            session.permanent = True
+            session["uid"] = user["id"]
+            return redirect(safe_next(next_url))
+    return render_template("auth.html", mode="login", error=error, username=username, next=next_url)
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.get("/api/me")
+@login_required
+def me():
+    u = current_user()
+    return jsonify(username=u["username"], is_public=bool(u["is_public"]))
+
+
+@app.put("/api/me/visibility")
+@login_required
+def set_visibility():
+    """Body: {"is_public": true} or {"is_public": false}."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    db.execute("UPDATE users SET is_public = ? WHERE id = ?", (1 if data.get("is_public") else 0, uid()))
+    db.commit()
+    g.pop("user", None)
+    return me()
 
 
 # ---------------------------------------------------------------- helpers
@@ -89,19 +274,21 @@ def clean_rating(value):
     return math.floor(number * 2 + 0.5) / 2  # round halves up, same as the browser
 
 
-def find_or_create_artist(db, name):
+def find_or_create_artist(db, user_id, name):
     name = " ".join((name or "").split()) or "Unknown artist"
     key = artist_key(name)
-    row = db.execute("SELECT id FROM artists WHERE key = ?", (key,)).fetchone()
+    row = db.execute("SELECT id FROM artists WHERE user_id = ? AND key = ?", (user_id, key)).fetchone()
     if row:
         return row["id"]
-    pos = db.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM artists").fetchone()[0]
-    cur = db.execute("INSERT INTO artists (name, key, position) VALUES (?, ?, ?)", (name, key, pos))
+    pos = db.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM artists WHERE user_id = ?", (user_id,)).fetchone()[0]
+    cur = db.execute("INSERT INTO artists (user_id, name, key, position) VALUES (?, ?, ?, ?)", (user_id, name, key, pos))
     return cur.lastrowid
 
 
-def remove_empty_artists(db):
-    db.execute("DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM albums)")
+def remove_empty_artists(db, user_id):
+    db.execute(
+        "DELETE FROM artists WHERE user_id = ? AND id NOT IN (SELECT DISTINCT artist_id FROM albums)", (user_id,)
+    )
 
 
 def next_album_position(db, artist_id):
@@ -146,14 +333,36 @@ def album_json(db, row):
 
 
 def get_album_row(db, album_id):
+    """The signed-in user's album, or 404 (also for someone else's album)."""
     row = db.execute(
         "SELECT albums.*, artists.name AS artist FROM albums JOIN artists ON artists.id = albums.artist_id "
-        "WHERE albums.id = ?",
-        (album_id,),
+        "WHERE albums.id = ? AND albums.user_id = ?",
+        (album_id, uid()),
     ).fetchone()
     if row is None:
         abort(404, "Album not found.")
     return row
+
+
+def owned_song(db, song_id):
+    row = db.execute(
+        "SELECT songs.id FROM songs JOIN albums ON albums.id = songs.album_id WHERE songs.id = ? AND albums.user_id = ?",
+        (song_id, uid()),
+    ).fetchone()
+    if row is None:
+        abort(404, "Song not found.")
+    return row
+
+
+def library_for(db, user_id):
+    artists = [dict(r) for r in db.execute(
+        "SELECT id, name, position FROM artists WHERE user_id = ? ORDER BY position, id", (user_id,))]
+    rows = db.execute(
+        "SELECT albums.*, artists.name AS artist FROM albums JOIN artists ON artists.id = albums.artist_id "
+        "WHERE albums.user_id = ? ORDER BY albums.position, albums.created_at",
+        (user_id,),
+    ).fetchall()
+    return {"artists": artists, "albums": [album_json(db, r) for r in rows]}
 
 
 @app.errorhandler(400)
@@ -165,13 +374,13 @@ def json_error(err):
         message = "That image is too large. Pick one under 10 MB."
     if request.path.startswith("/api/"):
         return jsonify(error=message), err.code
+    if err.code == 404:
+        return render_template("not_found.html"), 404
     return message, err.code
 
 
-# ---------------------------------------------------------------- pages
-
 @app.context_processor
-def asset_helpers():
+def template_helpers():
     def asset(filename):
         """Static file URL that changes whenever the file changes, so browsers never use a stale copy."""
         try:
@@ -179,12 +388,15 @@ def asset_helpers():
         except OSError:
             version = 0
         return f"/static/{filename}?v={version}"
-    return {"asset": asset}
+    return {"asset": asset, "me": current_user()}
 
+
+# ---------------------------------------------------------------- pages
 
 @app.get("/")
+@login_required
 def index():
-    return render_template("index.html")
+    return render_template("index.html", mode="owner", page_user=current_user())
 
 
 @app.get("/covers/<path:filename>")
@@ -192,20 +404,36 @@ def cover(filename):
     return send_from_directory(COVER_DIR, filename)
 
 
+@app.get("/<username>")
+def public_page(username):
+    """Someone's public page. Private or unknown usernames get the same 'not found' page."""
+    user = get_db().execute(
+        "SELECT * FROM users WHERE username = ? AND is_public = 1", (username.lower(),)
+    ).fetchone()
+    if user is None:
+        abort(404)
+    return render_template("index.html", mode="public", page_user=user)
+
+
 # ---------------------------------------------------------------- API
 
 @app.get("/api/library")
+@login_required
 def library():
+    return jsonify(library_for(get_db(), uid()))
+
+
+@app.get("/api/u/<username>/library")
+def public_library(username):
     db = get_db()
-    artists = [dict(r) for r in db.execute("SELECT id, name, position FROM artists ORDER BY position, id")]
-    rows = db.execute(
-        "SELECT albums.*, artists.name AS artist FROM albums JOIN artists ON artists.id = albums.artist_id "
-        "ORDER BY albums.position, albums.created_at"
-    ).fetchall()
-    return jsonify(artists=artists, albums=[album_json(db, r) for r in rows])
+    user = db.execute("SELECT id FROM users WHERE username = ? AND is_public = 1", (username.lower(),)).fetchone()
+    if user is None:
+        abort(404, "This page is private or doesn't exist.")
+    return jsonify(library_for(db, user["id"]))
 
 
 @app.post("/api/albums")
+@login_required
 def create_album():
     db = get_db()
     title = (request.form.get("title") or "").strip()
@@ -213,10 +441,10 @@ def create_album():
     if not title or not artist:
         abort(400, "Add both the album name and the artist.")
     cover_name = save_cover(request.files.get("cover"))
-    artist_id = find_or_create_artist(db, artist)
+    artist_id = find_or_create_artist(db, uid(), artist)
     cur = db.execute(
-        "INSERT INTO albums (title, artist_id, cover, position, created_at) VALUES (?, ?, ?, ?, ?)",
-        (title, artist_id, cover_name, next_album_position(db, artist_id), time.time()),
+        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (uid(), title, artist_id, cover_name, next_album_position(db, artist_id), time.time()),
     )
     album_id = cur.lastrowid
     db.execute("INSERT INTO songs (album_id, name, rating, position) VALUES (?, '', NULL, 0)", (album_id,))
@@ -225,6 +453,7 @@ def create_album():
 
 
 @app.patch("/api/albums/<int:album_id>")
+@login_required
 def update_album(album_id):
     db = get_db()
     row = get_album_row(db, album_id)
@@ -233,18 +462,19 @@ def update_album(album_id):
         title = (data["title"] or "").strip() or "Untitled"
         db.execute("UPDATE albums SET title = ? WHERE id = ?", (title, album_id))
     if "artist" in data:
-        new_artist_id = find_or_create_artist(db, data["artist"])
+        new_artist_id = find_or_create_artist(db, uid(), data["artist"])
         if new_artist_id != row["artist_id"]:
             db.execute(
                 "UPDATE albums SET artist_id = ?, position = ? WHERE id = ?",
                 (new_artist_id, next_album_position(db, new_artist_id), album_id),
             )
-            remove_empty_artists(db)
+            remove_empty_artists(db, uid())
     db.commit()
     return jsonify(album_json(db, get_album_row(db, album_id)))
 
 
 @app.post("/api/albums/<int:album_id>/cover")
+@login_required
 def replace_cover(album_id):
     db = get_db()
     row = get_album_row(db, album_id)
@@ -258,18 +488,20 @@ def replace_cover(album_id):
 
 
 @app.delete("/api/albums/<int:album_id>")
+@login_required
 def delete_album(album_id):
     db = get_db()
     row = get_album_row(db, album_id)
     db.execute("DELETE FROM songs WHERE album_id = ?", (album_id,))
     db.execute("DELETE FROM albums WHERE id = ?", (album_id,))
-    remove_empty_artists(db)
+    remove_empty_artists(db, uid())
     db.commit()
     delete_cover(row["cover"])
     return "", 204
 
 
 @app.post("/api/albums/<int:album_id>/songs")
+@login_required
 def add_song(album_id):
     db = get_db()
     get_album_row(db, album_id)
@@ -277,19 +509,19 @@ def add_song(album_id):
     pos = db.execute(
         "SELECT COALESCE(MAX(position), -1) + 1 FROM songs WHERE album_id = ?", (album_id,)
     ).fetchone()[0]
+    name, rating = (data.get("name") or "").strip(), clean_rating(data.get("rating"))
     cur = db.execute(
-        "INSERT INTO songs (album_id, name, rating, position) VALUES (?, ?, ?, ?)",
-        (album_id, (data.get("name") or "").strip(), clean_rating(data.get("rating")), pos),
+        "INSERT INTO songs (album_id, name, rating, position) VALUES (?, ?, ?, ?)", (album_id, name, rating, pos)
     )
     db.commit()
-    return jsonify(id=cur.lastrowid, name=(data.get("name") or "").strip(), rating=clean_rating(data.get("rating"))), 201
+    return jsonify(id=cur.lastrowid, name=name, rating=rating), 201
 
 
 @app.patch("/api/songs/<int:song_id>")
+@login_required
 def update_song(song_id):
     db = get_db()
-    if db.execute("SELECT 1 FROM songs WHERE id = ?", (song_id,)).fetchone() is None:
-        abort(404, "Song not found.")
+    owned_song(db, song_id)
     data = request.get_json(silent=True) or {}
     if "name" in data:
         db.execute("UPDATE songs SET name = ? WHERE id = ?", ((data["name"] or "").strip(), song_id))
@@ -300,22 +532,25 @@ def update_song(song_id):
 
 
 @app.delete("/api/songs/<int:song_id>")
+@login_required
 def delete_song(song_id):
     db = get_db()
+    owned_song(db, song_id)
     db.execute("DELETE FROM songs WHERE id = ?", (song_id,))
     db.commit()
     return "", 204
 
 
 @app.put("/api/order")
+@login_required
 def save_order():
     """Body: {"artists": [artist ids in order]} and/or {"albums": [album ids in order]}."""
     db = get_db()
     data = request.get_json(silent=True) or {}
     for i, artist_id in enumerate(data.get("artists") or []):
-        db.execute("UPDATE artists SET position = ? WHERE id = ?", (i, int(artist_id)))
+        db.execute("UPDATE artists SET position = ? WHERE id = ? AND user_id = ?", (i, int(artist_id), uid()))
     for i, album_id in enumerate(data.get("albums") or []):
-        db.execute("UPDATE albums SET position = ? WHERE id = ?", (i, int(album_id)))
+        db.execute("UPDATE albums SET position = ? WHERE id = ? AND user_id = ?", (i, int(album_id), uid()))
     db.commit()
     return "", 204
 
@@ -323,4 +558,4 @@ def save_order():
 init_db()
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=os.environ.get("MUSICBOARD_DEBUG", "1") == "1")

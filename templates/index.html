@@ -1,56 +1,53 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Musicboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;800&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
-  <link rel="stylesheet" href="{{ asset('style.css') }}">
+  {% if mode == "public" %}<title>@{{ page_user.username }} · Musicboard</title>{% else %}<title>Musicboard</title>{% endif %}
+{% include "_head.html" %}
 </head>
 <body>
   <div class="wrap">
     <header class="top">
+      <div class="top-left">
+        {% if mode == "owner" %}
+          <span class="who">@{{ me.username }}</span>
+          <form method="post" action="{{ url_for('logout') }}"><button class="link-btn" type="submit">Log out</button></form>
+        {% elif me and me.id == page_user.id %}
+          <a class="link-btn" href="{{ url_for('index') }}">← Back to editing</a>
+        {% elif me %}
+          <a class="link-btn" href="{{ url_for('index') }}">← My board</a>
+        {% else %}
+          <a class="link-btn" href="{{ url_for('signup') }}">Make your own board</a>
+        {% endif %}
+      </div>
       <div class="brand">
-        <h1 aria-label="Musicboard">Musicb<span class="vinyl" aria-hidden="true"><svg viewBox="0 0 100 100">
-          <defs>
-            <radialGradient id="vinylLabel" cx="38%" cy="36%" r="75%" fx="34%" fy="30%">
-              <stop offset="0" stop-color="#f5d0fe"/>
-              <stop offset=".22" stop-color="#c084fc"/>
-              <stop offset=".5" stop-color="#7c3aed"/>
-              <stop offset=".75" stop-color="#3730a3"/>
-              <stop offset="1" stop-color="#0b1340"/>
-            </radialGradient>
-            <radialGradient id="vinylNebula" cx="70%" cy="72%" r="45%">
-              <stop offset="0" stop-color="#38bdf8" stop-opacity=".75"/>
-              <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
-            </radialGradient>
-          </defs>
-          <circle class="disc" cx="50" cy="50" r="50"/>
-          <g class="grooves" fill="none"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="39"/><circle cx="50" cy="50" r="34"/><circle cx="50" cy="50" r="29"/></g>
-          <path class="shine" d="M50 8 A42 42 0 0 1 86 29" fill="none"/>
-          <circle cx="50" cy="50" r="19" fill="url(#vinylLabel)"/>
-          <circle cx="50" cy="50" r="19" fill="url(#vinylNebula)"/>
-          <g fill="#fff"><circle cx="42" cy="58" r=".9"/><circle cx="58" cy="41" r=".7"/><circle cx="55" cy="60" r=".6"/><circle cx="40" cy="44" r=".5"/><circle cx="61" cy="52" r=".8" opacity=".8"/></g>
-          <circle class="hole" cx="50" cy="50" r="3.5"/>
-        </svg></span>ard</h1>
-        <p class="tagline">Every album you've played, scored track by track.</p>
+        {% include "_title.html" %}
+        {% if mode == "public" %}
+          <p class="tagline">@{{ page_user.username }}'s albums, scored track by track.</p>
+        {% else %}
+          <p class="tagline">Every album you've played, scored track by track.</p>
+        {% endif %}
         <p id="summary" class="summary"></p>
       </div>
       <div class="top-actions">
-        <button class="btn" id="arrangeBtn" type="button" hidden>Arrange</button>
-        <button class="plus-btn" id="addAlbumBtn" type="button" aria-label="Add album" title="Add album">+</button>
+        {% if mode == "owner" %}
+          <button class="btn vis-btn" id="visBtn" type="button"></button>
+          <button class="btn" id="arrangeBtn" type="button" hidden>Arrange</button>
+          <button class="plus-btn" id="addAlbumBtn" type="button" aria-label="Add album" title="Add album">+</button>
+        {% endif %}
       </div>
     </header>
+    {% if mode == "public" and me and me.id == page_user.id %}
+      <p class="preview-note">This is what visitors see. Only you can make changes.</p>
+    {% endif %}
     <div class="scale" aria-label="Rating colors from 0.5 to 10">
       <span>Scale</span>
       <div class="scale-cells" id="scaleCells"></div>
-      <span class="status" id="status">Loading your albums…</span>
+      <span class="status" id="status">Loading albums…</span>
     </div>
     <main id="shelves" class="shelves"></main>
   </div>
   <input type="file" id="coverFile" accept="image/*" hidden>
+  <script>window.MB = {{ {"mode": mode, "username": page_user.username, "isPublic": page_user.is_public == 1} | tojson }};</script>
   <script src="{{ asset('app.js') }}"></script>
 </body>
 </html>

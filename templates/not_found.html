@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Page not found · Musicboard</title>
+{% include "_head.html" %}
+</head>
+<body>
+  <div class="wrap auth-wrap">
+    <div class="brand">
+      {% include "_title.html" %}
+    </div>
+    <div class="empty centered">
+      <h2>Nothing playing here</h2>
+      <p>This page is private, or nobody has that username.</p>
+      <a class="btn primary" href="{{ url_for('index') if me else url_for('signup') }}">{{ "Go to my board" if me else "Make your own board" }}</a>
+    </div>
+  </div>
+</body>
+</html>

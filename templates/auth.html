@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>{{ "Sign up" if mode == "signup" else "Log in" }} · Musicboard</title>
+{% include "_head.html" %}
+</head>
+<body>
+  <div class="wrap auth-wrap">
+    <div class="brand">
+      {% include "_title.html" %}
+      <p class="tagline">Every album you've played, scored track by track.</p>
+    </div>
+    <form class="sheet small auth-card" method="post" novalidate>
+      <div class="sheet-body">
+        <h3>{{ "Create your board" if mode == "signup" else "Log in" }}</h3>
+        <div class="field">
+          <label for="username">Username</label>
+          <input class="text" id="username" name="username" value="{{ username or '' }}" autocomplete="username"
+                 autocapitalize="none" spellcheck="false" required autofocus>
+          {% if mode == "signup" %}<span class="hint-text">This is also your public link if you share your page: /yourname</span>{% endif %}
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input class="text" id="password" name="password" type="password" required
+                 autocomplete="{{ 'new-password' if mode == 'signup' else 'current-password' }}">
+          {% if mode == "signup" %}<span class="hint-text">At least 8 characters.</span>{% endif %}
+        </div>
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+        {% if error %}<p class="err">{{ error }}</p>{% endif %}
+        <button class="btn primary auth-submit" type="submit">{{ "Create account" if mode == "signup" else "Log in" }}</button>
+        <p class="auth-switch">
+          {% if mode == "signup" %}Already have an account? <a href="{{ url_for('login') }}">Log in</a>
+          {% else %}New here? <a href="{{ url_for('signup') }}">Create an account</a>{% endif %}
+        </p>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

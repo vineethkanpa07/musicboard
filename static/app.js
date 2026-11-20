@@ -13,6 +13,10 @@
   const $ = s => document.querySelector(s);
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
+  // "owner" = your own board (editable); "public" = someone's shared page (read-only)
+  const MB = window.MB || { mode: "owner" };
+  const RO = MB.mode === "public";
+
   function toast(msg) {
     const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
     document.body.appendChild(t); setTimeout(() => t.remove(), 3200);
@@ -26,6 +30,7 @@
     let res;
     try { res = await fetch(url, opts); }
     catch (e) { toast("Couldn't reach the server. Is app.py still running?"); throw e; }
+    if (res.status === 401) { location.href = "/login"; throw new Error("Logged out"); }
     if (!res.ok) {
       let msg = "Something went wrong saving that.";
       try { msg = (await res.json()).error || msg; } catch (_) { }
@@ -41,7 +46,7 @@
   const state = { artists: [], albums: new Map(), arrange: false, openId: null, ready: false };
 
   async function load() {
-    const data = await api("GET", "/api/library");
+    const data = await api("GET", RO ? `/api/u/${encodeURIComponent(MB.username)}/library` : "/api/library");
     state.artists = data.artists;
     state.albums = new Map(data.albums.map(a => [a.id, a]));
     state.ready = true;
@@ -96,9 +101,12 @@
   }
   function renderDashboard() {
     const el = $("#shelves");
-    $("#arrangeBtn").hidden = state.albums.size < 2;
-    $("#arrangeBtn").classList.toggle("on", state.arrange);
-    $("#arrangeBtn").textContent = state.arrange ? "Done arranging" : "Arrange";
+    const arrangeBtn = $("#arrangeBtn");
+    if (arrangeBtn) {
+      arrangeBtn.hidden = state.albums.size < 2;
+      arrangeBtn.classList.toggle("on", state.arrange);
+      arrangeBtn.textContent = state.arrange ? "Done arranging" : "Arrange";
+    }
     el.classList.toggle("arranging", state.arrange);
     if (!state.ready) return;
 
@@ -107,8 +115,12 @@
     $("#summary").textContent = state.albums.size
       ? `${plural(state.albums.size, "album")} · ${plural(gs.length, "artist")} · ${plural(rated, "track")} rated`
       : "";
-    setStatus(state.arrange ? "Drag albums or artists, or use the arrows." : "Saved automatically");
+    setStatus(RO ? "View only" : state.arrange ? "Drag albums or artists, or use the arrows." : "Saved automatically");
 
+    if (!state.albums.size && RO) {
+      el.innerHTML = `<div class="empty"><h2>Nothing on the shelf yet</h2><p>@${esc(MB.username)} hasn't added any albums.</p></div>`;
+      return;
+    }
     if (!state.albums.size) {
       el.innerHTML = `<div class="empty"><h2>Your shelf is empty</h2>
         <p>Add an album with its artist and cover. Then rate each track from 0.5 to 10 and watch the colors fill in. Albums by the same artist line up together.</p>
@@ -237,8 +249,8 @@
   });
   shelves.addEventListener("dragend", () => { drag = null; clearMarks(); });
 
-  $("#arrangeBtn").addEventListener("click", () => { state.arrange = !state.arrange; renderDashboard(); });
-  $("#addAlbumBtn").addEventListener("click", openAddAlbum);
+  $("#arrangeBtn")?.addEventListener("click", () => { state.arrange = !state.arrange; renderDashboard(); });
+  $("#addAlbumBtn")?.addEventListener("click", openAddAlbum);
 
   // ---------- cover images (shrunk in the browser before upload) ----------
   function shrinkImage(file) {
@@ -330,20 +342,20 @@
     ov.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(a.title)}">
       <button class="icon-btn close-x" type="button" id="closeAlbum" aria-label="Close">✕</button>
       <div class="album-head">
-        <button class="cover-btn" type="button" id="coverBtn" aria-label="Change cover">
-          <div class="sleeve" id="albumSleeve">${sleeveHtml(a)}</div><span class="hint">${a.cover_url ? "Change cover" : "Add cover"}</span></button>
+        <button class="cover-btn" type="button" id="coverBtn" aria-label="Change cover" ${RO ? "disabled" : ""}>
+          <div class="sleeve" id="albumSleeve">${sleeveHtml(a)}</div>${RO ? "" : `<span class="hint">${a.cover_url ? "Change cover" : "Add cover"}</span>`}</button>
         <div class="album-meta">
-          <input class="bare t-title" id="albTitle" value="${esc(a.title)}" aria-label="Album name">
-          <input class="bare t-artist" id="albArtist" value="${esc(a.artist)}" aria-label="Artist" list="artistList2">
+          <input class="bare t-title" id="albTitle" value="${esc(a.title)}" aria-label="Album name" ${RO ? "readonly" : ""}>
+          <input class="bare t-artist" id="albArtist" value="${esc(a.artist)}" aria-label="Artist" list="artistList2" ${RO ? "readonly" : ""}>
           <datalist id="artistList2">${groups().map(g => `<option value="${esc(g.name)}">`).join("")}</datalist>
           <div class="stats" id="albStats"></div>
         </div>
       </div>
       <div class="tracks" id="tracks"></div>
-      <button class="add-song" type="button" id="addSong"><b>+</b> Add song</button>
-      <p class="tip">'Enter' key moves from the song name to its score, then to a new song. Scores run up to 10, halves allowed.</p>
+      ${RO ? "" : `<button class="add-song" type="button" id="addSong"><b>+</b> Add song</button>
+      <p class="tip">'Enter' key moves from the song name to its score, then to a new song. Scores run up to 10, halves allowed.</p>`}
       <div class="sheet-foot" id="foot">
-        <button class="btn danger" type="button" id="delAlbum">Delete album</button>
+        ${RO ? "<span></span>" : `<button class="btn danger" type="button" id="delAlbum">Delete album</button>`}
         <button class="btn primary" type="button" id="doneAlbum">Done</button>
       </div></div>`;
     document.body.appendChild(ov);
@@ -353,6 +365,7 @@
     ov.addEventListener("mousedown", e => { if (e.target === ov) close(); });
     $("#closeAlbum").onclick = close; $("#doneAlbum").onclick = close;
     ov.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+    if (RO) return;
 
     $("#coverBtn").onclick = () => pickCover(async blob => {
       const fd = new FormData(); fd.append("cover", blob, "cover.jpg");
@@ -404,10 +417,10 @@
     const filled = s.rating != null;
     return `<div class="track" data-sid="${s.id}">
       <span class="no">${i + 1}</span>
-      <input class="name" id="n-${s.id}" value="${esc(s.name)}" placeholder="Song name" aria-label="Song ${i + 1} name" autocomplete="off">
+      <input class="name" id="n-${s.id}" value="${esc(s.name)}" placeholder="Song name" aria-label="Song ${i + 1} name" autocomplete="off" ${RO ? "readonly" : ""}>
       <input class="rate${filled ? " filled" : ""}" id="r-${s.id}" value="${filled ? fmt(s.rating) : ""}" placeholder="–/10" inputmode="decimal"
-        aria-label="Score out of 10" autocomplete="off" style="${filled ? `background:${ratingColor(s.rating)}` : ""}">
-      <button class="del" type="button" data-del="${s.id}" aria-label="Remove song">×</button>
+        aria-label="Score out of 10" autocomplete="off" style="${filled ? `background:${ratingColor(s.rating)}` : ""}" ${RO ? "readonly" : ""}>
+      ${RO ? "<span></span>" : `<button class="del" type="button" data-del="${s.id}" aria-label="Remove song">×</button>`}
     </div>`;
   }
   function renderTracks() {
@@ -437,6 +450,7 @@
     return { a, s: a.songs.find(x => x.id === Number(row.dataset.sid)) };
   };
   document.addEventListener("input", e => {
+    if (RO) return;
     const hit = songFromEvent(e); if (!hit || !hit.s) return;
     const { s } = hit;
     if (e.target.classList.contains("name")) { s.name = e.target.value; saveSongSoon(s.id, { name: s.name }); renderStats(); }
@@ -455,6 +469,7 @@
     e.target.value = hit.s.rating != null ? fmt(hit.s.rating) : "";
   });
   document.addEventListener("keydown", e => {
+    if (RO) return;
     const hit = songFromEvent(e); if (!hit || !hit.s) return;
     const { a, s } = hit;
     if (e.target.classList.contains("name") && e.key === "Enter") { e.preventDefault(); document.getElementById("r-" + s.id).select(); }
@@ -474,6 +489,7 @@
     }
   });
   document.addEventListener("click", async e => {
+    if (RO) return;
     const b = e.target.closest("[data-del]"); if (!b || !state.openId) return;
     const a = state.albums.get(state.openId); const sid = Number(b.dataset.del);
     try {
@@ -484,6 +500,54 @@
     } catch (_) { }
   });
   window.addEventListener("beforeunload", flushSongs);
+
+  // ---------- page visibility (private by default; public = /username) ----------
+  const visBtn = $("#visBtn");
+  const publicUrl = () => `${location.origin}/${MB.username}`;
+  function renderVisBtn() {
+    if (!visBtn) return;
+    visBtn.classList.toggle("is-public", MB.isPublic);
+    visBtn.textContent = MB.isPublic ? "Public" : "Private";
+    visBtn.title = MB.isPublic ? `Anyone can view ${publicUrl()}` : "Only you can see your board";
+  }
+  function openVisibility() {
+    closeOverlay();
+    const ov = document.createElement("div"); ov.className = "overlay";
+    ov.innerHTML = MB.isPublic
+      ? `<div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="visH"><div class="sheet-body">
+          <h3 id="visH">Your page is public</h3>
+          <p class="body-text">Anyone with this link can see your albums and scores. Only you can change them.</p>
+          <div class="share-link"><input class="text" id="shareUrl" value="${esc(publicUrl())}" readonly aria-label="Your public link">
+            <button class="btn" type="button" id="copyUrl">Copy</button></div>
+          <a href="/${esc(MB.username)}" target="_blank" rel="noopener">See what visitors see ↗</a>
+          <div class="row"><button class="btn" type="button" id="goPrivate">Make private</button><button class="btn primary" type="button" id="visDone">Done</button></div>
+        </div></div>`
+      : `<div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="visH"><div class="sheet-body">
+          <h3 id="visH">Make your page public?</h3>
+          <p class="body-text">Your board is private right now. If you make it public, anyone can view it at this link. Only you can change anything.</p>
+          <div class="share-link"><input class="text" value="${esc(publicUrl())}" readonly aria-label="Your public link"></div>
+          <div class="row"><button class="btn" type="button" id="visDone">Keep private</button><button class="btn primary" type="button" id="goPublic">Make public</button></div>
+        </div></div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
+    ov.addEventListener("keydown", e => { if (e.key === "Escape") closeOverlay(); });
+    $("#visDone").onclick = closeOverlay;
+    const setPublic = async isPublic => {
+      try {
+        const me = await api("PUT", "/api/me/visibility", { is_public: isPublic });
+        MB.isPublic = me.is_public; renderVisBtn(); openVisibility();
+        toast(MB.isPublic ? "Your page is public" : "Your page is private");
+      } catch (_) { }
+    };
+    $("#goPublic")?.addEventListener("click", () => setPublic(true));
+    $("#goPrivate")?.addEventListener("click", () => setPublic(false));
+    $("#copyUrl")?.addEventListener("click", () => {
+      navigator.clipboard?.writeText(publicUrl()).then(() => toast("Link copied"), () => { $("#shareUrl").select(); toast("Press Ctrl+C or Cmd+C to copy"); })
+        ?? ($("#shareUrl").select(), toast("Press Ctrl+C or Cmd+C to copy"));
+    });
+    setTimeout(() => ov.querySelector(".btn.primary")?.focus(), 0);
+  }
+  if (visBtn) { renderVisBtn(); visBtn.addEventListener("click", openVisibility); }
 
   load().catch(() => setStatus("Couldn't load your albums. Make sure app.py is running, then reload."));
 })();
