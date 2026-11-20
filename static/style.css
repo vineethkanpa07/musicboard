@@ -225,3 +225,7 @@ a.link-btn { color: var(--muted); }
 .rename-btn { width: 28px; height: 28px; border-color: transparent; background: none; color: var(--muted); align-self: center; }
 .rename-btn:hover, .rename-btn:focus-visible { color: var(--fg); border-color: var(--line); background: var(--surface); }
 .rename-input { font-family: var(--display); font-weight: 700; font-size: 20px; padding: 4px 10px; width: min(360px, 100%); }
+
+.add-album-btn { padding: 10px 18px; font-size: 15px; box-shadow: var(--shadow); white-space: nowrap; }
+.add-album-btn span { font-size: 20px; line-height: 1; font-weight: 500; }
+.add-album-btn:hover { filter: brightness(1.08); }
