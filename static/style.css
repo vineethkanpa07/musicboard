@@ -99,8 +99,11 @@ header.top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: ce
 .card-move { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; justify-content: space-between; }
 .card-move .icon-btn { background: var(--surface); box-shadow: var(--shadow); }
 /* Arrange mode: make it obvious albums and artist rows can be dragged */
-.arranging .card, .arranging .group-head { cursor: grab; }
-.arranging .card:active, .arranging .group-head:active { cursor: grabbing; }
+.arranging .group, .arranging .card { cursor: grab; }  /* the whole artist row is draggable, empty space included */
+.arranging .group:active, .arranging .card:active { cursor: grabbing; }
+.arranging .group { border-radius: 12px; transition: background .15s, box-shadow .15s; }
+/* shade the hovered row; the spread shadow in the same color pads it out without moving anything */
+.arranging .group:hover { background: var(--surface-2); box-shadow: 0 0 0 12px var(--surface-2); }
 .arranging .card-move .icon-btn { cursor: pointer; }
 .arranging .card:hover .sleeve { outline-color: var(--accent); }
 .arranging .sleeve::after { content: "Drag to move"; position: absolute; inset: 0; display: grid; place-items: center;
@@ -168,7 +171,7 @@ header.top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: ce
 .sheet-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 18px 24px 22px; flex-wrap: wrap; }
 .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
 .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 14px; z-index: 80; max-width: calc(100% - 32px); }
-@media (prefers-reduced-motion: reduce) { .sleeve, .arranging .sleeve::after { transition: none; } .card:hover .sleeve { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sleeve, .arranging .sleeve::after, .arranging .group { transition: none; } .card:hover .sleeve { transform: none; } }
 
 /* base reset (the hosted version got this from its page wrapper) */
 html { -webkit-text-size-adjust: 100%; }
