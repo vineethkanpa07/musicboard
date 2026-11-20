@@ -9,10 +9,42 @@ row["name"] or row[0]); this module makes those work on Postgres too.
 """
 
 import os
+import re
 import sqlite3
+import sys
+from urllib.parse import urlsplit
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+def _clean_url(raw):
+    """Accept the connection string even if it was pasted with quotes or as Neon's psql command."""
+    url = (raw or "").strip()
+    url = re.sub(r"^psql\s+", "", url)  # Neon's "psql 'postgresql://...'" snippet
+    return url.strip().strip("'\"").strip()
+
+
+DATABASE_URL = _clean_url(os.environ.get("DATABASE_URL"))
 USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+# Seconds to wait for the database before giving up with a clear error (instead of hanging).
+CONNECT_TIMEOUT = 10
+
+
+def log(message):
+    print(f"[musicboard] {message}", file=sys.stderr, flush=True)
+
+
+def describe_database():
+    """Where the data lives, for the server log. Never includes the password."""
+    if not USE_POSTGRES:
+        raw = os.environ.get("DATABASE_URL", "").strip()
+        if raw:
+            return f"SQLite file. DATABASE_URL is set but isn't a postgresql:// address (it starts with {raw[:12]!r})"
+        return "SQLite file (DATABASE_URL is not set)"
+    parts = urlsplit(DATABASE_URL)
+    return f"Postgres at {parts.hostname}, database {parts.path.lstrip('/') or '?'}, user {parts.username or '?'}"
+
+
+class DatabaseUnavailable(Exception):
+    """The hosted database couldn't be reached in time."""
 
 SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -190,21 +222,40 @@ def _get_pool():
         # Small pool: free databases allow few connections. min_size=0 and max_idle close
         # connections after a minute of no use, so a free Neon database can go to sleep (it only
         # counts compute time while awake). check= replaces connections the database closed.
-        _pool = ConnectionPool(DATABASE_URL, min_size=0, max_size=5, max_idle=60, kwargs={"row_factory": _row_factory},
+        # prepare_threshold=None: Neon's pooled connections don't keep prepared statements between queries.
+        _pool = ConnectionPool(DATABASE_URL, min_size=0, max_size=5, max_idle=60, timeout=CONNECT_TIMEOUT,
+                               kwargs={"row_factory": _row_factory, "prepare_threshold": None, "connect_timeout": CONNECT_TIMEOUT},
                                check=ConnectionPool.check_connection, open=True)
     return _pool
 
 
+def _getconn():
+    from psycopg_pool import PoolTimeout
+    try:
+        return _get_pool().getconn()
+    except PoolTimeout as err:
+        raise DatabaseUnavailable(str(err)) from err
+
+
 def _init_postgres():
-    with _get_pool().connection() as conn:
-        # Several web workers can start at once; the lock stops them creating tables at the same time.
-        conn.execute("SELECT pg_advisory_xact_lock(727274)")
-        conn.execute(POSTGRES_SCHEMA)
+    import psycopg
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=CONNECT_TIMEOUT, prepare_threshold=None) as conn:
+            # Several web workers can start at once; the lock stops them creating tables at the same time.
+            conn.execute("SELECT pg_advisory_xact_lock(727274)")
+            conn.execute(POSTGRES_SCHEMA)
+        log("Connected to the database and checked its tables.")
+    except psycopg.Error as err:
+        # Keep the site up so the error page can explain the problem; the log says what went wrong.
+        log(f"COULD NOT CONNECT TO THE DATABASE: {str(err).strip()}")
+        log("Check DATABASE_URL in Render > your service > Environment. It should be Neon's connection string, "
+            "starting with postgresql:// and ending with sslmode=require.")
 
 
 # ---------------------------------------------------------------- what app.py uses
 
 def init(sqlite_path):
+    log(f"Storing data in: {describe_database()}")
     if USE_POSTGRES:
         _init_postgres()
     else:
@@ -214,7 +265,7 @@ def init(sqlite_path):
 def connect(sqlite_path):
     """A connection for one request. Pass it to close() when the request ends."""
     if USE_POSTGRES:
-        return _PgConnection(_get_pool().getconn())
+        return _PgConnection(_getconn())
     return _connect_sqlite(sqlite_path)
 
 

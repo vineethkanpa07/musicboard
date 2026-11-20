@@ -328,6 +328,15 @@ def json_error(err):
     return message, err.code
 
 
+@app.errorhandler(database.DatabaseUnavailable)
+def database_unavailable(err):
+    database.log(f"Database unavailable: {err}")
+    message = "Musicboard can't reach its database right now. Try again in a minute."
+    if request.path.startswith("/api/"):
+        return jsonify(error=message), 503
+    return render_template("not_found.html", heading="Can't reach the database", message=message), 503
+
+
 @app.context_processor
 def template_helpers():
     def asset(filename):
@@ -337,7 +346,11 @@ def template_helpers():
         except OSError:
             version = 0
         return f"/static/{filename}?v={version}"
-    return {"asset": asset, "me": current_user()}
+    try:
+        me = current_user()
+    except database.DatabaseUnavailable:
+        me = None  # still show the page (e.g. the "can't reach the database" message)
+    return {"asset": asset, "me": me}
 
 
 # ---------------------------------------------------------------- pages
