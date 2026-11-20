@@ -129,11 +129,12 @@
     }
     el.innerHTML = gs.map((g, gi) => {
       const avgs = g.albums.map(albumAvg).filter(v => v != null);
-      const gAvg = avgs.length ? fmt(avgs.reduce((a, b) => a + b, 0) / avgs.length) : null;
+      const gAvg = avgs.length ? avgs.reduce((a, b) => a + b, 0) / avgs.length : null;
       return `<section class="group" data-group="${g.id}" ${state.arrange ? 'draggable="true"' : ""}>
         <div class="group-head">
           <h2>${esc(g.name)}</h2>
-          <span class="meta">${plural(g.albums.length, "album")}${gAvg ? ` · avg ${gAvg}` : ""}</span>
+          ${gAvg != null ? `<span class="group-avg" style="background:${ratingColor(gAvg)}" title="Average of ${esc(g.name)}'s albums">${fmt(gAvg)}</span>` : ""}
+          <span class="meta">${plural(g.albums.length, "album")}</span>
           ${state.arrange ? `<div class="group-tools">
             <button class="icon-btn" type="button" data-act="gup" data-key="${g.id}" ${gi === 0 ? "disabled" : ""} aria-label="Move ${esc(g.name)} up">▲</button>
             <button class="icon-btn" type="button" data-act="gdown" data-key="${g.id}" ${gi === gs.length - 1 ? "disabled" : ""} aria-label="Move ${esc(g.name)} down">▼</button></div>` : ""}
