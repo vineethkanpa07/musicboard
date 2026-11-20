@@ -11,10 +11,10 @@
   --accent-fg: #ffffff;
   --danger: #c8322b;
   --shadow: 0 1px 2px rgb(0 0 0 / .06), 0 6px 20px rgb(0 0 0 / .06);
-  --title: "Unbounded", "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
-  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
-  --body: "Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --title: "Unbounded", "Avenir Next", system-ui, sans-serif;
+  --display: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --body: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;  /* numbers: same face, tabular figures */
   --radius: 10px;
 }
 @media (prefers-color-scheme: dark) {
@@ -33,6 +33,7 @@
 }
 * { box-sizing: border-box; }
 body {
+  font-variant-numeric: tabular-nums;
   background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.45;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   padding-block: 0 64px;
@@ -73,7 +74,7 @@ header.top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: ce
 /* shelves */
 .shelves { display: flex; flex-direction: column; gap: 34px; padding-top: 16px; }
 .group-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.group-head h2 { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+.group-head h2 { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: -.02em; margin: 0; text-wrap: balance; }
 .group-head .meta { color: var(--muted); font-size: 13px; font-family: var(--mono); }
 .group-tools { margin-left: auto; display: flex; gap: 6px; }
 .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; font-size: 14px; padding: 0; }
@@ -102,7 +103,7 @@ header.top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: ce
 
 /* empty */
 .empty { display: grid; justify-items: start; gap: 12px; padding: 56px 0; max-width: 520px; }
-.empty h2 { font-family: var(--display); font-size: 28px; margin: 0; letter-spacing: -.01em; }
+.empty h2 { font-family: var(--display); font-size: 28px; margin: 0; letter-spacing: -.02em; }
 .empty p { margin: 0; color: var(--muted); }
 
 /* overlays */
