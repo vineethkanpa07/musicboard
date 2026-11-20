@@ -1,6 +1,6 @@
 # Musicboard
 
-Rate every song on the albums you listen to, from 1 to 10.
+Rate every song on the albums you listen to, from 0.5 to 10.
 
 - Press **+** to add an album: name, artist and an optional cover picture.
 - Open an album and press **+ Add song** to type a song name and score it right next to it.

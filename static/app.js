@@ -3,8 +3,8 @@
   // ---------- helpers ----------
   // Each score maps to one fixed color: 1 = red, about 5 = amber, 10 = green.
   function ratingColor(r) {
-    const v = Math.min(10, Math.max(1, Number(r)));
-    const hue = 2 + (v - 1) * (128 / 9);
+    const v = Math.min(10, Math.max(0.5, Number(r)));
+    const hue = Math.max(0, 2 + (v - 1) * (128 / 9));
     const light = 50 + Math.sin(((v - 1) / 9) * Math.PI) * 6;
     return `hsl(${hue.toFixed(1)} 72% ${light.toFixed(1)}%)`;
   }
@@ -111,7 +111,7 @@
 
     if (!state.albums.size) {
       el.innerHTML = `<div class="empty"><h2>Your shelf is empty</h2>
-        <p>Add an album with its artist and cover. Then rate each track from 1 to 10 and watch the colors fill in. Albums by the same artist line up together.</p>
+        <p>Add an album with its artist and cover. Then rate each track from 0.5 to 10 and watch the colors fill in. Albums by the same artist line up together.</p>
         <button class="btn primary" type="button" data-act="add">+ Add your first album</button></div>`;
       return;
     }
@@ -341,7 +341,7 @@
       </div>
       <div class="tracks" id="tracks"></div>
       <button class="add-song" type="button" id="addSong"><b>+</b> Add song</button>
-      <p class="tip">Enter moves from the song name to its score, then to a new song. Scores run 1 to 10, halves allowed.</p>
+      <p class="tip">Enter moves from the song name to its score, then to a new song. Scores run 0.5 to 10 in half steps.</p>
       <div class="sheet-foot" id="foot">
         <button class="btn danger" type="button" id="delAlbum">Delete album</button>
         <button class="btn primary" type="button" id="doneAlbum">Done</button>
@@ -429,7 +429,7 @@
     if (!t) return null;
     const n = Number(t);
     if (!isFinite(n)) return undefined;
-    return Math.round(Math.min(10, Math.max(1, n)) * 2) / 2;
+    return Math.round(Math.min(10, Math.max(0.5, n)) * 2) / 2;
   }
   const songFromEvent = e => {
     const a = state.albums.get(state.openId); const row = e.target.closest?.(".track");
@@ -468,7 +468,8 @@
       e.preventDefault();
       const up = e.key === "ArrowUp";
       const cur = s.rating ?? (up ? 0 : 11);
-      e.target.value = Math.min(10, Math.max(1, Math.round(cur) + (up ? 1 : -1)));
+      const step = up ? Math.floor(cur) + 1 : Math.ceil(cur) - 1;   // whole numbers, with 0.5 at the bottom
+      e.target.value = Math.min(10, Math.max(0.5, step));
       e.target.dispatchEvent(new Event("input", { bubbles: true }));
     }
   });

@@ -1,8 +1,9 @@
-"""Musicboard: rate every song on the albums you listen to, 1 to 10.
+"""Musicboard: rate every song on the albums you listen to, 0.5 to 10.
 
 Run with:  python app.py   then open http://127.0.0.1:5000
 """
 
+import math
 import os
 import sqlite3
 import time
@@ -77,15 +78,15 @@ def artist_key(name):
 
 
 def clean_rating(value):
-    """Return a rating between 1 and 10 in half steps, or None for blank."""
+    """Return a rating between 0.5 and 10 in half steps, or None for blank."""
     if value is None or value == "":
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
-        abort(400, "Rating must be a number from 1 to 10.")
-    number = min(10.0, max(1.0, number))
-    return round(number * 2) / 2
+        abort(400, "Rating must be a number from 0.5 to 10.")
+    number = min(10.0, max(0.5, number))
+    return math.floor(number * 2 + 0.5) / 2  # round halves up, same as the browser
 
 
 def find_or_create_artist(db, name):
