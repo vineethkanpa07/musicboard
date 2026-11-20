@@ -856,6 +856,36 @@
   bellBtn?.addEventListener("click", openNotifications);
   friendsBtn?.addEventListener("click", openFriends);
 
+  // ---------- a friend's friends (shown on a friend's board) ----------
+  async function loadBoardFriends() {
+    const el = $("#friendStats"); if (!el) return;
+    let data;
+    try { data = await api("GET", `/api/u/${encodeURIComponent(MB.username)}/friends`, undefined, { quiet: true }); } catch (_) { return; }
+    el.innerHTML = `<button class="link-btn" type="button" data-list="all">${plural(data.total, "friend")}</button>
+      <span aria-hidden="true">·</span>
+      <button class="link-btn" type="button" data-list="mutual" ${data.mutual ? "" : "disabled"}>${data.mutual} mutual</button>`;
+    el.hidden = false;
+    el.addEventListener("click", e => {
+      const b = e.target.closest("button[data-list]"); if (!b || b.disabled) return;
+      const mutualOnly = b.dataset.list === "mutual";
+      const list = mutualOnly ? data.friends.filter(f => f.mutual) : data.friends;
+      closeOverlay();
+      const ov = document.createElement("div"); ov.className = "overlay";
+      ov.innerHTML = `<div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="bfH"><div class="sheet-body">
+        <h3 id="bfH">${mutualOnly ? `Mutual friends with ${esc(MB.username)}` : `${esc(MB.username)}'s friends`}</h3>
+        <div class="scroll"><ul class="panel-list">${list.map(f => `<li>${avatar(f.username)}<span class="person">${
+          f.can_view && !f.you ? `<a href="/${encodeURIComponent(f.username)}">${esc(f.username)}</a>` : esc(f.username)}<small>${
+          f.you ? "You" : f.mutual ? "Your friend too" : f.can_view ? "Public board" : "Private board"}</small></span></li>`).join("")}</ul></div>
+        <div class="row"><button class="btn primary" type="button" id="bfDone">Done</button></div></div></div>`;
+      document.body.appendChild(ov);
+      ov.onEscape = closeOverlay;
+      ov.addEventListener("mousedown", ev => { if (ev.target === ov) closeOverlay(); });
+      $("#bfDone").onclick = closeOverlay;
+      setTimeout(() => $("#bfDone")?.focus(), 0);
+    });
+  }
+  if (RO) loadBoardFriends();
+
   // ---------- page visibility (private by default; public = /username) ----------
   const visBtn = $("#visBtn");
   const publicUrl = () => `${location.origin}/${MB.username}`;

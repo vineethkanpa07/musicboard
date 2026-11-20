@@ -39,6 +39,7 @@
           <p class="tagline">Every album you've played, scored track by track.</p>
         {% endif %}
         <p id="summary" class="summary"></p>
+        {% if mode == "public" and show_friend_counts %}<p class="friend-stats" id="friendStats" hidden></p>{% endif %}
       </div>
       <div class="top-actions">
         {% if mode == "owner" %}

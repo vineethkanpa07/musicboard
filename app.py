@@ -396,7 +396,10 @@ def public_page(username):
     user = viewable_user(db, username)
     if user is None:
         abort(404)
-    return render_template("index.html", mode="public", page_user=user, friends_only=not user["is_public"])
+    me = current_user()
+    is_friend = me is not None and me["id"] != user["id"] and relation(db, me["id"], user["id"])[0] == "friend"
+    return render_template("index.html", mode="public", page_user=user, friends_only=not user["is_public"],
+                           show_friend_counts=is_friend)
 
 
 # ---------------------------------------------------------------- API
@@ -730,6 +733,29 @@ def list_friends():
         else:
             out["sent" if r["requester_id"] == uid() else "received"].append(item)
     return jsonify(out)
+
+
+@app.get("/api/u/<username>/friends")
+@login_required
+def board_friends(username):
+    """A friend's friends, with which ones you share. Only that person's friends can see this list."""
+    db = get_db()
+    owner = user_by_name(db, username)
+    if relation(db, uid(), owner["id"])[0] != "friend":
+        abort(404, "Nobody has that username.")
+    mine = set(friend_ids(db, uid()))
+    theirs = friend_ids(db, owner["id"])
+    if not theirs:
+        return jsonify(total=0, mutual=0, friends=[])
+    marks = ",".join("?" * len(theirs))
+    rows = db.execute(f"SELECT id, username, is_public FROM users WHERE id IN ({marks}) ORDER BY username", tuple(theirs)).fetchall()
+    friends = [{
+        "username": r["username"],
+        "you": r["id"] == uid(),
+        "mutual": r["id"] in mine,
+        "can_view": r["id"] == uid() or bool(r["is_public"]) or r["id"] in mine,
+    } for r in rows]
+    return jsonify(total=len(friends), mutual=sum(f["mutual"] for f in friends), friends=friends)
 
 
 @app.post("/api/friends/request")
