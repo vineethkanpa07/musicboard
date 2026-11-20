@@ -446,6 +446,30 @@ def fill_in_year(album_id):
     return jsonify(year=row["year"] or year)
 
 
+def release_order_position(db, artist_id, released):
+    """Where a new album goes in its artist's row: before the first album released after it, so the
+    row stays oldest-to-newest. Albums with no known date are skipped over. You can still drag
+    albums anywhere afterwards; this only picks the starting spot."""
+    end = next_album_position(db, artist_id)
+    if not released:
+        return end
+    rows = db.execute(
+        "SELECT id, position, released, year FROM albums WHERE artist_id = ? ORDER BY position, created_at", (artist_id,)
+    ).fetchall()
+    for row in rows:
+        other = row["released"] or (str(row["year"]) if row["year"] else None)
+        if not other:
+            continue
+        # compare full dates when both have one; otherwise just the years
+        later = other > released if len(other) == len(released) == 10 else other[:4] > released[:4]
+        if later:
+            # make room: everything from this spot on moves one place to the right
+            db.execute("UPDATE albums SET position = position + 1 WHERE artist_id = ? AND position >= ?",
+                       (artist_id, row["position"]))
+            return row["position"]
+    return end
+
+
 def already_on_shelf(db, itunes_id, title, artist):
     """The same Apple album, or (for albums added before IDs were saved) the same title by the same artist."""
     if db.execute("SELECT 1 FROM albums WHERE user_id = ? AND itunes_id = ?", (uid(), itunes_id)).fetchone():
@@ -464,7 +488,7 @@ def import_album():
 
     The search runs in the visitor's browser (so Apple's rate limit is per visitor, not shared by
     the whole site), and the browser sends the album it looked up:
-    {"id": <Apple's album ID>, "title": ..., "artist": ..., "year": 2016,
+    {"id": <Apple's album ID>, "title": ..., "artist": ..., "year": 2016, "released": "2016-08-20",
      "artwork": "https://...mzstatic.com/...", "tracks": ["Song", ...]}
     """
     data = request.get_json(silent=True) or {}
@@ -478,6 +502,8 @@ def import_album():
         abort(400, "Pick an album from the search results.")
     names = [clean_text(t) for t in tracks if isinstance(t, str)] or [""]
     year = clean_year(data.get("year"))
+    released = str(data.get("released") or "")[:10]
+    released = released if re.match(r"^\d{4}-\d{2}-\d{2}$", released) else None
     artwork = big_artwork(data.get("artwork"))
     if artwork and not ARTWORK_URL_RE.match(artwork):
         artwork = None  # only Apple's artwork links are used as covers
@@ -485,9 +511,11 @@ def import_album():
     if already_on_shelf(db, itunes_id, title, artist):
         abort(409, f"{title} is already on your shelf.")
     artist_id = find_or_create_artist(db, uid(), artist)
+    position = release_order_position(db, artist_id, released or (str(year) if year else None))
     cur = db.execute(
-        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at, itunes_id, year) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (uid(), title, artist_id, artwork, next_album_position(db, artist_id), time.time(), itunes_id, year),
+        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at, itunes_id, year, released) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (uid(), title, artist_id, artwork, position, time.time(), itunes_id, year, released),
     )
     album_id = cur.lastrowid
     db.executemany(

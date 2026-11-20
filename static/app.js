@@ -394,7 +394,7 @@
     const tracks = found.filter(r => r.wrapperType === "track" && (r.kind || "song") === "song")
       .sort((a, b) => (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0));
     return { id: album.collectionId, title: album.collectionName || "Untitled", artist: album.artistName || "Unknown artist",
-             year: Number((album.releaseDate || "").slice(0, 4)) || null,
+             year: Number((album.releaseDate || "").slice(0, 4)) || null, released: (album.releaseDate || "").slice(0, 10) || null,
              artwork: album.artworkUrl100 || null, tracks: tracks.map(t => (t.trackName || "").trim()) };
   }
 
@@ -467,8 +467,9 @@
       try {
         const details = await lookupAlbum(r.id);
         const album = await api("POST", "/api/albums/import", details);
-        state.albums.set(album.id, album); syncArtist(album);
-        renderDashboard(); openAlbum(album.id, "rate");
+        // reload the shelf: the new album may have slotted in among the artist's others (release order)
+        await load().catch(() => { state.albums.set(album.id, album); syncArtist(album); renderDashboard(); });
+        openAlbum(album.id, "rate");
       } catch (err) {
         if (err instanceof SearchError) toast(err.message);
         showResults(lastResults, $("#albumSearch").value.trim());
