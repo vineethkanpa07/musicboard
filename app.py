@@ -29,7 +29,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MUSICBOARD_DATA", BASE_DIR / "instance"))
 DB_PATH = DATA_DIR / "musicboard.db"
 COVER_DIR = DATA_DIR / "covers"
-ALLOWED_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 
 # Album search uses Apple's free iTunes Search API (no key needed).
 ITUNES_API = os.environ.get("MUSICBOARD_ITUNES_API", "https://itunes.apple.com")
@@ -305,17 +304,6 @@ def next_album_position(db, artist_id):
     ).fetchone()[0]
 
 
-def save_cover(file_storage):
-    if not file_storage or not file_storage.filename:
-        return None
-    ext = ALLOWED_IMAGE_TYPES.get(file_storage.mimetype)
-    if not ext:
-        abort(400, "Cover must be a JPG, PNG, WebP or GIF image.")
-    filename = uuid.uuid4().hex + ext
-    file_storage.save(COVER_DIR / filename)
-    return filename
-
-
 def delete_cover(filename):
     if filename:
         try:
@@ -441,92 +429,6 @@ def public_library(username):
     return jsonify(library_for(db, user["id"]))
 
 
-@app.post("/api/albums")
-@login_required
-def create_album():
-    db = get_db()
-    title = (request.form.get("title") or "").strip()
-    artist = (request.form.get("artist") or "").strip()
-    if not title or not artist:
-        abort(400, "Add both the album name and the artist.")
-    cover_name = save_cover(request.files.get("cover"))
-    artist_id = find_or_create_artist(db, uid(), artist)
-    cur = db.execute(
-        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (uid(), title, artist_id, cover_name, next_album_position(db, artist_id), time.time()),
-    )
-    album_id = cur.lastrowid
-    db.execute("INSERT INTO songs (album_id, name, rating, position) VALUES (?, '', NULL, 0)", (album_id,))
-    db.commit()
-    return jsonify(album_json(db, get_album_row(db, album_id))), 201
-
-
-@app.patch("/api/albums/<int:album_id>")
-@login_required
-def update_album(album_id):
-    db = get_db()
-    row = get_album_row(db, album_id)
-    data = request.get_json(silent=True) or {}
-    if "title" in data:
-        title = (data["title"] or "").strip() or "Untitled"
-        db.execute("UPDATE albums SET title = ? WHERE id = ?", (title, album_id))
-    if "artist" in data:
-        new_artist_id = find_or_create_artist(db, uid(), data["artist"])
-        if new_artist_id != row["artist_id"]:
-            db.execute(
-                "UPDATE albums SET artist_id = ?, position = ? WHERE id = ?",
-                (new_artist_id, next_album_position(db, new_artist_id), album_id),
-            )
-            remove_empty_artists(db, uid())
-    db.commit()
-    return jsonify(album_json(db, get_album_row(db, album_id)))
-
-
-@app.patch("/api/artists/<int:artist_id>")
-@login_required
-def rename_artist(artist_id):
-    """Body: {"name": "New name"}. Every album by this artist shows the new name.
-    Renaming to an artist you already have merges the two into one row."""
-    db = get_db()
-    artist = db.execute("SELECT * FROM artists WHERE id = ? AND user_id = ?", (artist_id, uid())).fetchone()
-    if artist is None:
-        abort(404, "Artist not found.")
-    name = " ".join(((request.get_json(silent=True) or {}).get("name") or "").split())
-    if not name:
-        abort(400, "Artist name can't be empty.")
-    key = artist_key(name)
-    other = db.execute(
-        "SELECT id FROM artists WHERE user_id = ? AND key = ? AND id != ?", (uid(), key, artist_id)
-    ).fetchone()
-    if other:
-        start = next_album_position(db, other["id"])
-        albums = db.execute(
-            "SELECT id FROM albums WHERE artist_id = ? ORDER BY position, created_at", (artist_id,)
-        ).fetchall()
-        for i, a in enumerate(albums):
-            db.execute("UPDATE albums SET artist_id = ?, position = ? WHERE id = ?", (other["id"], start + i, a["id"]))
-        db.execute("UPDATE artists SET name = ? WHERE id = ?", (name, other["id"]))
-        db.execute("DELETE FROM artists WHERE id = ?", (artist_id,))
-    else:
-        db.execute("UPDATE artists SET name = ?, key = ? WHERE id = ?", (name, key, artist_id))
-    db.commit()
-    return jsonify(library_for(db, uid()))
-
-
-@app.post("/api/albums/<int:album_id>/cover")
-@login_required
-def replace_cover(album_id):
-    db = get_db()
-    row = get_album_row(db, album_id)
-    new_name = save_cover(request.files.get("cover"))
-    if not new_name:
-        abort(400, "Choose an image to upload.")
-    db.execute("UPDATE albums SET cover = ? WHERE id = ?", (new_name, album_id))
-    db.commit()
-    delete_cover(row["cover"])
-    return jsonify(album_json(db, get_album_row(db, album_id)))
-
-
 @app.delete("/api/albums/<int:album_id>")
 @login_required
 def delete_album(album_id):
@@ -551,9 +453,9 @@ def itunes_get(path, **params):
     except urllib.error.HTTPError as err:
         if err.code in (403, 429):  # Apple allows roughly 20 searches a minute
             abort(502, "Apple's music search is busy. Wait a minute and try again.")
-        abort(502, "Album search isn't working right now. Try again, or add the album yourself.")
+        abort(502, "Album search isn't working right now. Try again in a moment.")
     except (urllib.error.URLError, TimeoutError, ValueError):
-        abort(502, "Album search isn't reachable right now. Check your internet connection, or add the album yourself.")
+        abort(502, "Album search isn't reachable right now. Check your internet connection and try again.")
 
 
 def big_artwork(url, size=600):

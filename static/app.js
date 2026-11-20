@@ -123,7 +123,7 @@
     }
     if (!state.albums.size) {
       el.innerHTML = `<div class="empty"><h2>Your shelf is empty</h2>
-        <p>Add an album with its artist and cover. Then rate each track from 0.5 to 10 and watch the colors fill in. Albums by the same artist line up together.</p>
+        <p>Search for an album and it's added with its cover and full tracklist. Then rate each track from 0.5 to 10 and watch the colors fill in. Albums by the same artist line up together.</p>
         <button class="btn primary" type="button" data-act="add">+ Add your first album</button></div>`;
       return;
     }
@@ -133,8 +133,6 @@
       return `<section class="group" data-group="${g.id}" ${state.arrange ? 'draggable="true"' : ""}>
         <div class="group-head">
           <h2>${esc(g.name)}</h2>
-          ${RO || state.arrange ? "" : `<button class="icon-btn rename-btn" type="button" data-act="rename" data-key="${g.id}" aria-label="Rename ${esc(g.name)}" title="Rename artist">
-            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M13.5 6.5l4 4" stroke="currentColor" stroke-width="2"/></svg></button>`}
           <span class="meta">${plural(g.albums.length, "album")}${gAvg ? ` · avg ${gAvg}` : ""}</span>
           ${state.arrange ? `<div class="group-tools">
             <button class="icon-btn" type="button" data-act="gup" data-key="${g.id}" ${gi === 0 ? "disabled" : ""} aria-label="Move ${esc(g.name)} up">▲</button>
@@ -143,35 +141,6 @@
         <div class="grid">${g.albums.map((a, ai) => cardHtml(a, ai, g.albums.length)).join("")}</div>
       </section>`;
     }).join("");
-  }
-
-  // ---------- renaming an artist ----------
-  function startRename(head, artistId) {
-    const artist = state.artists.find(a => a.id === artistId); if (!artist || !head) return;
-    const h2 = head.querySelector("h2");
-    head.querySelector(".rename-btn").hidden = true;
-    const input = document.createElement("input");
-    input.className = "text rename-input"; input.value = artist.name; input.setAttribute("aria-label", "Artist name");
-    h2.replaceWith(input); input.focus(); input.select();
-    let done = false;
-    const finish = async save => {
-      if (done) return; done = true;
-      const name = input.value.trim();
-      if (!save || !name || name === artist.name) { renderDashboard(); return; }
-      input.disabled = true;
-      try {
-        const lib = await api("PATCH", `/api/artists/${artistId}`, { name });
-        state.artists = lib.artists;
-        state.albums = new Map(lib.albums.map(a => [a.id, a]));
-        toast(`Renamed to ${name}`);
-      } catch (_) { }
-      renderDashboard();
-    };
-    input.addEventListener("keydown", e => {
-      if (e.key === "Enter") { e.preventDefault(); finish(true); }
-      if (e.key === "Escape") { e.preventDefault(); finish(false); }
-    });
-    input.addEventListener("blur", () => finish(true));
   }
 
   // ---------- reordering ----------
@@ -222,7 +191,6 @@
       if (a === "right") shiftAlbum(Number(act.dataset.id), 1);
       if (a === "gup") shiftGroup(Number(act.dataset.key), -1);
       if (a === "gdown") shiftGroup(Number(act.dataset.key), 1);
-      if (a === "rename") startRename(act.closest(".group-head"), Number(act.dataset.key));
       return;
     }
     const card = e.target.closest(".card");
@@ -284,79 +252,23 @@
   $("#arrangeBtn")?.addEventListener("click", () => { state.arrange = !state.arrange; renderDashboard(); });
   $("#addAlbumBtn")?.addEventListener("click", openAddAlbum);
 
-  // ---------- cover images (shrunk in the browser before upload) ----------
-  function shrinkImage(file) {
-    return new Promise((resolve, reject) => {
-      if (!file || !file.type.startsWith("image/")) return reject(new Error("Pick an image file (JPG, PNG, WebP)."));
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That image couldn't be opened. Try a JPG or PNG.")); };
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        const s = Math.min(1, 800 / Math.max(img.width, img.height));
-        const c = document.createElement("canvas");
-        c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
-        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-        c.toBlob(b => b ? resolve(b) : reject(new Error("Couldn't process that image.")), "image/jpeg", 0.88);
-      };
-      img.src = url;
-    });
-  }
-  let coverCallback = null;
-  $("#coverFile").addEventListener("change", async e => {
-    const f = e.target.files[0]; e.target.value = "";
-    if (!f || !coverCallback) return;
-    try { coverCallback(await shrinkImage(f)); } catch (err) { toast(err.message); }
-  });
-  function pickCover(cb) { coverCallback = cb; $("#coverFile").click(); }
-
   // ---------- add album ----------
   const closeOverlay = () => document.querySelector(".overlay")?.remove();
   function openAddAlbum() {
     closeOverlay();
-    let cover = null;
     const ov = document.createElement("div"); ov.className = "overlay";
-    ov.innerHTML = `<form class="sheet small" role="dialog" aria-modal="true" aria-labelledby="addH">
+    ov.innerHTML = `<div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="addH">
       <div class="sheet-body">
-        <h3 id="addH">New album</h3>
-        <div class="field" id="searchField"><label for="albumSearch">Search for an album</label>
+        <h3 id="addH">Add album</h3>
+        <div class="field"><label for="albumSearch">Search for an album</label>
           <input class="text" id="albumSearch" type="search" autocomplete="off" placeholder="Album or artist, e.g. Blonde Frank Ocean"></div>
         <div class="results" id="searchResults" aria-live="polite"></div>
-        <button class="link-btn manual-toggle" type="button" id="manualToggle">Can't find it? Add it yourself</button>
-        <div class="manual" id="manualFields" hidden>
-        <div class="field"><label for="newTitle">Album</label><input class="text" id="newTitle" autocomplete="off" placeholder="e.g. Blonde"></div>
-        <div class="field"><label for="newArtist">Artist</label><input class="text" id="newArtist" list="artistList" autocomplete="off" placeholder="e.g. Frank Ocean">
-          <datalist id="artistList">${groups().map(g => `<option value="${esc(g.name)}">`).join("")}</datalist></div>
-        <div class="field"><label>Cover (optional)</label>
-          <div class="cover-pick"><div class="sleeve" id="newCoverPrev"><div class="ph">?</div></div>
-            <button class="btn" type="button" id="newCoverBtn">Choose image</button></div></div>
-        </div>
-        <p class="err" id="newErr" hidden></p>
-        <div class="row"><button class="btn" type="button" id="newCancel">Cancel</button><button class="btn primary" type="submit" id="newSubmit" hidden>Add album</button></div>
-      </div></form>`;
+        <div class="row"><button class="btn" type="button" id="newCancel">Cancel</button></div>
+      </div></div>`;
     document.body.appendChild(ov);
     ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
     ov.addEventListener("keydown", e => { if (e.key === "Escape") closeOverlay(); });
     $("#newCancel").onclick = closeOverlay;
-    $("#newCoverBtn").onclick = () => pickCover(blob => {
-      cover = blob;
-      $("#newCoverPrev").innerHTML = `<img src="${URL.createObjectURL(blob)}" alt="Selected cover">`;
-      $("#newCoverBtn").textContent = "Change image";
-    });
-    ov.querySelector("form").addEventListener("submit", async e => {
-      e.preventDefault();
-      const title = $("#newTitle").value.trim(), artist = $("#newArtist").value.trim();
-      if (!title || !artist) { const er = $("#newErr"); er.textContent = "Add both the album name and the artist."; er.hidden = false; return; }
-      const fd = new FormData();
-      fd.append("title", title); fd.append("artist", artist);
-      if (cover) fd.append("cover", cover, "cover.jpg");
-      $("#newSubmit").disabled = true;
-      try {
-        const album = await api("POST", "/api/albums", fd);
-        state.albums.set(album.id, album); syncArtist(album);
-        renderDashboard(); openAlbum(album.id, true);
-      } catch (_) { $("#newSubmit").disabled = false; }
-    });
 
     // --- search ---
     const onShelf = r => [...state.albums.values()].some(a =>
@@ -366,7 +278,7 @@
     function showResults(results, q) {
       lastResults = results;
       if (!q) { resultsEl.innerHTML = ""; return; }
-      if (!results.length) { resultsEl.innerHTML = `<p class="results-note">No albums found for “${esc(q)}”. Try fewer words, or add it yourself below.</p>`; return; }
+      if (!results.length) { resultsEl.innerHTML = `<p class="results-note">No albums found for “${esc(q)}”. Try different words, like the album and the artist's name.</p>`; return; }
       resultsEl.innerHTML = results.map((r, i) => `<button class="result" type="button" data-i="${i}">
         ${r.artwork ? `<img src="${esc(r.artwork)}" alt="" loading="lazy">` : `<span class="result-ph"></span>`}
         <span class="result-text"><span class="result-title">${esc(r.title)}${r.explicit ? ' <span class="e-badge" title="Explicit">E</span>' : ""}</span>
@@ -387,7 +299,7 @@
           if (!res.ok) { resultsEl.innerHTML = `<p class="results-note">${esc(data.error || "Search failed.")}</p>`; return; }
           showResults(data.results, q);
         } catch (err) {
-          if (err.name !== "AbortError") resultsEl.innerHTML = `<p class="results-note">Search isn't reachable right now. Add the album yourself below.</p>`;
+          if (err.name !== "AbortError") resultsEl.innerHTML = `<p class="results-note">Search isn't reachable right now. Check your internet connection and try again.</p>`;
         }
       }, 300);
     });
@@ -405,12 +317,6 @@
         renderDashboard(); openAlbum(album.id, "rate");
       } catch (_) { showResults(lastResults, $("#albumSearch").value.trim()); }
     });
-    $("#manualToggle").onclick = () => {
-      const typed = $("#albumSearch").value.trim();
-      $("#manualFields").hidden = false; $("#newSubmit").hidden = false; $("#manualToggle").hidden = true;
-      $("#searchField").hidden = true; resultsEl.hidden = true; searchCtl?.abort(); clearTimeout(searchTimer);
-      $("#newTitle").value = typed; $("#newTitle").focus();
-    };
     setTimeout(() => $("#albumSearch").focus(), 0);
   }
 
@@ -424,7 +330,6 @@
   function flushSongs() {
     for (const [id, p] of Object.entries(songTimers)) { clearTimeout(p.t); api("PATCH", `/api/songs/${id}`, p.fields).catch(() => { }); delete songTimers[id]; }
   }
-  let titleTimer = null;
 
   function openAlbum(id, focusFirst) {
     closeOverlay();
@@ -434,12 +339,10 @@
     ov.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(a.title)}">
       <button class="icon-btn close-x" type="button" id="closeAlbum" aria-label="Close">✕</button>
       <div class="album-head">
-        <button class="cover-btn" type="button" id="coverBtn" aria-label="Change cover" ${RO ? "disabled" : ""}>
-          <div class="sleeve" id="albumSleeve">${sleeveHtml(a)}</div>${RO ? "" : `<span class="hint">${a.cover_url ? "Change cover" : "Add cover"}</span>`}</button>
+        <div class="sleeve">${sleeveHtml(a)}</div>
         <div class="album-meta">
-          <input class="bare t-title" id="albTitle" value="${esc(a.title)}" aria-label="Album name" ${RO ? "readonly" : ""}>
-          <input class="bare t-artist" id="albArtist" value="${esc(a.artist)}" aria-label="Artist" list="artistList2" ${RO ? "readonly" : ""}>
-          <datalist id="artistList2">${groups().map(g => `<option value="${esc(g.name)}">`).join("")}</datalist>
+          <h2 class="t-title">${esc(a.title)}</h2>
+          <p class="t-artist">${esc(a.artist)}</p>
           <div class="stats" id="albStats"></div>
         </div>
       </div>
@@ -459,25 +362,6 @@
     ov.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
     if (RO) return;
 
-    $("#coverBtn").onclick = () => pickCover(async blob => {
-      const fd = new FormData(); fd.append("cover", blob, "cover.jpg");
-      try {
-        const updated = await api("POST", `/api/albums/${id}/cover`, fd);
-        a.cover_url = updated.cover_url; $("#albumSleeve").innerHTML = sleeveHtml(a);
-      } catch (_) { }
-    });
-    $("#albTitle").addEventListener("input", e => {
-      a.title = e.target.value;
-      clearTimeout(titleTimer);
-      titleTimer = setTimeout(() => api("PATCH", `/api/albums/${id}`, { title: a.title }).catch(() => { }), 400);
-    });
-    $("#albTitle").addEventListener("blur", e => { if (!a.title.trim()) { a.title = "Untitled"; e.target.value = a.title; api("PATCH", `/api/albums/${id}`, { title: a.title }).catch(() => { }); } });
-    $("#albArtist").addEventListener("change", async e => {
-      try {
-        const updated = await api("PATCH", `/api/albums/${id}`, { artist: e.target.value });
-        Object.assign(a, updated); e.target.value = a.artist; syncArtist(a);
-      } catch (_) { e.target.value = a.artist; }
-    });
     $("#addSong").onclick = () => addSong(true);
     $("#delAlbum").onclick = () => {
       const n = a.songs.filter(s => s.name).length;

@@ -2,10 +2,9 @@
 
 Rate every song on the albums you listen to, from 0.5 to 10.
 
-- Press **+** and **search for an album**. Pick it from the results and it's added with its cover and
+- Press **Add Album** and search for it. Pick it from the results and it's added with its cover and
   full tracklist, ready to score. Search uses Apple's free iTunes catalog, so it needs an internet connection.
-- Can't find it? Choose **Add it yourself** and type the name, artist and an optional cover picture.
-- Open an album and press **+ Add song** to type a song name and score it right next to it.
+- Open an album and type a score next to each song. **+ Add song** adds anything the tracklist is missing.
   Enter jumps from the name to the score, and Enter again starts the next song.
 - Every score has a fixed color on a red (1) to green (10) scale.
 - The dashboard groups albums by artist automatically. Press **Arrange** to drag
