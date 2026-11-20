@@ -179,6 +179,8 @@ def uid():
 
 def username_problem(name):
     """Return why a username can't be used, or None if it's fine."""
+    if "/" in name or "\\" in name:
+        return "Usernames can't have a slash (/) in them, since your username becomes your page's web address."
     if not USERNAME_RE.match(name):
         return "Usernames are 3 to 30 characters: lowercase letters, numbers, dots, dashes or underscores, starting and ending with a letter or number."
     if name in RESERVED_USERNAMES:
