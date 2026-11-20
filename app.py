@@ -583,7 +583,7 @@ def albums_from_songs(query):
     """Albums that contain songs matching the search. Apple's album search can miss an artist's own
     albums (searching "blonde frank ocean" doesn't return Blonde), but its song search finds them."""
     albums = []
-    for r in itunes_get("search", term=query, entity="song", limit=50, country=ITUNES_COUNTRY).get("results", []):
+    for r in itunes_get("search", term=query, entity="song", limit=100, country=ITUNES_COUNTRY).get("results", []):
         if r.get("collectionId"):
             albums.append({
                 "collectionId": r["collectionId"], "collectionName": r.get("collectionName"),
@@ -597,7 +597,7 @@ def albums_from_songs(query):
 JUNK_WORDS = ("tribute", "karaoke", "instrumental", "lullaby", "relaxing", "piano versions", "made famous", "cover versions")
 
 
-def rank_albums(items, query):
+def rank_albums(items, query, song_hits=None):
     """Apple's search ranks lots of singles first. Put full albums whose title matches the search on top."""
     words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 1]
 
@@ -610,6 +610,7 @@ def rank_albums(items, query):
             points += 3  # every word of the search is in the title or artist
         if any(j in title and j not in query.lower() for j in JUNK_WORDS):
             points -= 5
+        points += min(3, (song_hits or {}).get(r.get("collectionId"), 0))  # several matching songs = likely the one you mean
         if title.endswith(" - single") or (r.get("trackCount") or 0) <= 2:
             points -= 4
         elif title.endswith(" - ep"):
@@ -626,13 +627,18 @@ def search_albums():
     if len(q) < 2:
         return jsonify(results=[])
     albums = itunes_get("search", term=q, entity="album", limit=100, country=ITUNES_COUNTRY).get("results", [])
-    albums += albums_from_songs(q)
+    song_albums = albums_from_songs(q)
+    albums += song_albums
+    # How many matching songs come from each album: a rough popularity signal, since Apple gives none.
+    song_hits = {}
+    for r in song_albums:
+        song_hits[r["collectionId"]] = song_hits.get(r["collectionId"], 0) + 1
     seen, unique = set(), []
     for r in albums:
         if r.get("collectionId") and r["collectionId"] not in seen:
             seen.add(r["collectionId"]); unique.append(r)
     results = []
-    for r in rank_albums(unique, q)[:15]:
+    for r in rank_albums(unique, q, song_hits)[:15]:
         if r.get("collectionType") not in (None, "Album") or not r.get("collectionId"):
             continue
         results.append({
