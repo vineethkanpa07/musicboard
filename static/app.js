@@ -17,24 +17,34 @@
   const MB = window.MB || { mode: "owner" };
   const RO = MB.mode === "public";
 
+  // A short message at the bottom of the screen that fades in, stays a few seconds, then fades out.
   function toast(msg) {
     const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
-    document.body.appendChild(t); setTimeout(() => t.remove(), 3200);
+    t.setAttribute("role", "status");
+    document.body.appendChild(t);
+    requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add("shown")));
+    setTimeout(() => {
+      t.classList.remove("shown");
+      t.addEventListener("transitionend", () => t.remove(), { once: true });
+      setTimeout(() => t.remove(), 600);  // in case the fade doesn't run (e.g. reduced motion)
+    }, 2800);
   }
   const setStatus = msg => { $("#status").textContent = msg; };
 
-  async function api(method, url, body) {
+  // quiet: for background saves the viewer didn't ask for; failures don't pop up a message.
+  async function api(method, url, body, { quiet = false } = {}) {
+    const say = msg => { if (!quiet) toast(msg); };
     const opts = { method };
     if (body instanceof FormData) opts.body = body;
     else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers = { "Content-Type": "application/json" }; }
     let res;
     try { res = await fetch(url, opts); }
-    catch (e) { toast("Couldn't reach the server. Is app.py still running?"); throw e; }
+    catch (e) { say("Couldn't reach Musicboard. Check your internet connection and try again."); throw e; }
     if (res.status === 401) { location.href = "/login"; throw new Error("Logged out"); }
     if (!res.ok) {
       let msg = "Something went wrong saving that.";
       try { msg = (await res.json()).error || msg; } catch (_) { }
-      toast(msg); throw new Error(msg);
+      say(msg); throw new Error(msg);
     }
     return res.status === 204 ? null : res.json();
   }
@@ -507,8 +517,8 @@
       // Apple's album search misses some albums (like Blonde); its song search still finds their songs.
       if (!found.length && !a.itunes_id) found = (await itunes("search", { term, entity: "song", limit: 25 })).filter(match);
       const year = Number((found[0]?.releaseDate || "").slice(0, 4));
-      if (!year) return;
-      a.year = (await api("POST", `/api/albums/${a.id}/year`, { year })).year;
+      if (!year || !state.albums.has(a.id)) return;  // nothing found, or the album was deleted meanwhile
+      a.year = (await api("POST", `/api/albums/${a.id}/year`, { year }, { quiet: true })).year;
       if (state.openId === a.id) $("#albYear").textContent = ` · ${a.year}`;
     } catch (_) { /* no year shown; that's fine */ }
   }
