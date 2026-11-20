@@ -35,6 +35,7 @@ ITUNES_API = os.environ.get("MUSICBOARD_ITUNES_API", "https://itunes.apple.com")
 ITUNES_COUNTRY = os.environ.get("MUSICBOARD_COUNTRY", "US")
 
 USERNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_.-]{1,28})[a-z0-9]$")
+FILE_LIKE_RE = re.compile(r"\.(ico|txt|xml|json|webmanifest|html?|js|css|png|jpe?g|gif|svg|webp|php)$")
 # Usernames that would clash with the app's own pages.
 RESERVED_USERNAMES = {
     "about", "account", "admin", "api", "covers", "help", "login", "logout", "me",
@@ -182,6 +183,9 @@ def username_problem(name):
         return "Usernames are 3 to 30 characters: lowercase letters, numbers, dots, dashes or underscores, starting and ending with a letter or number."
     if name in RESERVED_USERNAMES:
         return "That username is reserved. Pick another one."
+    if FILE_LIKE_RE.search(name):
+        # Browsers and search engines request addresses like /favicon.ico and /robots.txt on every site.
+        return "Usernames can't end like a file name (for example .png or .txt). Pick another one."
     return None
 
 
