@@ -490,31 +490,12 @@ def set_top_track(album_id):
     return jsonify(top_song_id=song_id)
 
 
-@app.post("/api/albums/<int:album_id>/songs")
-@login_required
-def add_song(album_id):
-    db = get_db()
-    get_album_row(db, album_id)
-    data = request.get_json(silent=True) or {}
-    pos = db.execute(
-        "SELECT COALESCE(MAX(position), -1) + 1 FROM songs WHERE album_id = ?", (album_id,)
-    ).fetchone()[0]
-    name, rating = (data.get("name") or "").strip(), clean_rating(data.get("rating"))
-    cur = db.execute(
-        "INSERT INTO songs (album_id, name, rating, position) VALUES (?, ?, ?, ?)", (album_id, name, rating, pos)
-    )
-    db.commit()
-    return jsonify(id=cur.lastrowid, name=name, rating=rating), 201
-
-
 @app.patch("/api/songs/<int:song_id>")
 @login_required
 def update_song(song_id):
     db = get_db()
     owned_song(db, song_id)
-    data = request.get_json(silent=True) or {}
-    if "name" in data:
-        db.execute("UPDATE songs SET name = ? WHERE id = ?", ((data["name"] or "").strip(), song_id))
+    data = request.get_json(silent=True) or {}  # only the score can change; song names come from iTunes
     if "rating" in data:
         db.execute("UPDATE songs SET rating = ? WHERE id = ?", (clean_rating(data["rating"]), song_id))
     db.commit()

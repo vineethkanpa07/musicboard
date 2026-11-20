@@ -454,8 +454,7 @@
         </div>
       </div>
       <div class="tracks" id="tracks"></div>
-      ${RO ? "" : `<button class="add-song" type="button" id="addSong"><b>+</b> Add song</button>
-      <p class="tip">'Enter' key moves from the song name to its score, then to a new song. Scores run up to 10, halves allowed.</p>`}
+      ${RO ? "" : `<p class="tip">'Enter' key moves to the next song's score. Scores run up to 10, halves allowed.</p>`}
       <div class="sheet-foot" id="foot">
         ${RO ? "<span></span>" : `<button class="btn danger" type="button" id="delAlbum">Delete album</button>`}
         <button class="btn primary" type="button" id="doneAlbum">Done</button>
@@ -469,7 +468,6 @@
     ov.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
     if (RO) return;
 
-    $("#addSong").onclick = () => addSong(true);
     $("#delAlbum").onclick = () => {
       const n = a.songs.filter(s => s.name).length;
       $("#foot").innerHTML = `<div class="confirm"><span>Delete “${esc(a.title)}”${n ? ` and its ${plural(n, "song")}` : ""}?</span>
@@ -483,8 +481,7 @@
         } catch (_) { }
       };
     };
-    if (focusFirst === "rate") setTimeout(() => document.querySelector(".track .rate")?.focus(), 0);
-    else if (focusFirst) setTimeout(() => document.querySelector(".track .name")?.focus(), 0);
+    if (focusFirst) setTimeout(() => document.querySelector(".track .rate")?.focus(), 0);
   }
 
   function renderStats() {
@@ -517,24 +514,16 @@
     const filled = s.rating != null;
     return `<div class="track" data-sid="${s.id}">
       <span class="no">${i + 1}</span>
-      <input class="name" id="n-${s.id}" value="${esc(s.name)}" placeholder="Song name" aria-label="Song ${i + 1} name" autocomplete="off" ${RO ? "readonly" : ""}>
+      <span class="name">${esc(s.name)}</span>
       <input class="rate${filled ? " filled" : ""}" id="r-${s.id}" value="${filled ? fmt(s.rating) : ""}" placeholder="–/10" inputmode="decimal"
-        aria-label="Score out of 10" autocomplete="off" style="${filled ? `background:${ratingColor(s.rating)}` : ""}" ${RO ? "readonly" : ""}>
+        aria-label="Score for ${esc(s.name)} out of 10" autocomplete="off" style="${filled ? `background:${ratingColor(s.rating)}` : ""}" ${RO ? "readonly" : ""}>
     </div>`;
   }
+  // Songs on the album's tracklist. Blank rows left over from the old "+ Add song" button are hidden.
+  const listedSongs = a => a.songs.filter(s => s.name.trim() || s.rating != null);
   function renderTracks() {
     const a = state.albums.get(state.openId); if (!a) return;
-    $("#tracks").innerHTML = a.songs.map((s, i) => trackHtml(s, i)).join("");
-  }
-  async function addSong(focus) {
-    const id = state.openId; const a = state.albums.get(id);
-    try {
-      const s = await api("POST", `/api/albums/${id}/songs`, { name: "" });
-      if (state.openId !== id) return;
-      a.songs.push(s);
-      $("#tracks").insertAdjacentHTML("beforeend", trackHtml(s, a.songs.length - 1));
-      if (focus) document.getElementById("n-" + s.id).focus();
-    } catch (_) { }
+    $("#tracks").innerHTML = listedSongs(a).map((s, i) => trackHtml(s, i)).join("");
   }
   function parseRating(v) {
     const t = String(v).trim().replace(",", ".");
@@ -552,7 +541,6 @@
     if (RO) return;
     const hit = songFromEvent(e); if (!hit || !hit.s) return;
     const { s } = hit;
-    if (e.target.classList.contains("name")) { s.name = e.target.value; saveSongSoon(s.id, { name: s.name }); renderStats(); }
     if (e.target.classList.contains("rate")) {
       const r = parseRating(e.target.value);
       if (r === undefined) return;
@@ -561,6 +549,17 @@
       e.target.style.background = r != null ? ratingColor(r) : "";
       saveSongSoon(s.id, { rating: r }); renderStats();
     }
+  });
+  // Clicking into a score selects it, so typing replaces the old score instead of adding to it.
+  // (A click's mouseup would undo a selection made on focus, so select again on that mouseup.)
+  let justFocused = null;
+  document.addEventListener("focusin", e => {
+    if (!e.target.classList?.contains("rate") || RO) return;
+    justFocused = e.target; e.target.select();
+  });
+  document.addEventListener("mouseup", e => {
+    if (e.target === justFocused) { e.preventDefault(); e.target.select(); }
+    justFocused = null;
   });
   document.addEventListener("focusout", e => {
     if (!e.target.classList?.contains("rate")) return;
@@ -571,12 +570,11 @@
     if (RO) return;
     const hit = songFromEvent(e); if (!hit || !hit.s) return;
     const { a, s } = hit;
-    if (e.target.classList.contains("name") && e.key === "Enter") { e.preventDefault(); document.getElementById("r-" + s.id).select(); }
     if (!e.target.classList.contains("rate")) return;
     if (e.key === "Enter") {
       e.preventDefault();
-      const next = a.songs[a.songs.indexOf(s) + 1];
-      if (next) document.getElementById("n-" + next.id).focus(); else addSong(true);
+      const songs = listedSongs(a), next = songs[songs.indexOf(s) + 1];
+      if (next) document.getElementById("r-" + next.id).select(); else $("#doneAlbum").focus();  // last song: on to Done
     }
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {
       e.preventDefault();
