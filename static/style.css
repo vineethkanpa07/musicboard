@@ -154,7 +154,7 @@ header.top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: ce
 
 .tracks { padding: 10px 24px 4px; }
 @media (max-width: 560px) { .tracks { padding: 8px 12px 4px; } }
-.track { display: grid; grid-template-columns: 30px minmax(0, 1fr) 64px 32px; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.track { display: grid; grid-template-columns: 30px minmax(0, 1fr) 64px; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .track .no { font-family: var(--mono); color: var(--muted); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
 .track .name { border: 1px solid transparent; background: none; border-radius: 6px; padding: 8px; width: 100%; }
 .track .name:hover { border-color: var(--line); }
@@ -163,8 +163,6 @@ header.top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: ce
 .rate.filled { border-color: transparent; color: #000 !important; -webkit-text-fill-color: #000; font-weight: 800; }
 .rate:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rate::placeholder { color: var(--muted); font-weight: 500; }
-.del { width: 32px; height: 32px; border: none; background: none; color: var(--muted); border-radius: 6px; font-size: 18px; }
-.del:hover { color: var(--danger); background: var(--surface-2); }
 .add-song { margin: 10px 24px 0; width: calc(100% - 48px); border: 1.5px dashed var(--line); background: none; border-radius: 8px; padding: 12px; color: var(--muted); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
 .add-song:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 560px) { .add-song { margin: 10px 12px 0; width: calc(100% - 24px); } }

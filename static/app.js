@@ -520,7 +520,6 @@
       <input class="name" id="n-${s.id}" value="${esc(s.name)}" placeholder="Song name" aria-label="Song ${i + 1} name" autocomplete="off" ${RO ? "readonly" : ""}>
       <input class="rate${filled ? " filled" : ""}" id="r-${s.id}" value="${filled ? fmt(s.rating) : ""}" placeholder="–/10" inputmode="decimal"
         aria-label="Score out of 10" autocomplete="off" style="${filled ? `background:${ratingColor(s.rating)}` : ""}" ${RO ? "readonly" : ""}>
-      ${RO ? "<span></span>" : `<button class="del" type="button" data-del="${s.id}" aria-label="Remove song">×</button>`}
     </div>`;
   }
   function renderTracks() {
@@ -587,17 +586,6 @@
       e.target.value = Math.min(10, Math.max(0.5, step));
       e.target.dispatchEvent(new Event("input", { bubbles: true }));
     }
-  });
-  document.addEventListener("click", async e => {
-    if (RO) return;
-    const b = e.target.closest("[data-del]"); if (!b || !state.openId) return;
-    const a = state.albums.get(state.openId); const sid = Number(b.dataset.del);
-    try {
-      clearTimeout(songTimers[sid]?.t); delete songTimers[sid];
-      await api("DELETE", `/api/songs/${sid}`);
-      a.songs = a.songs.filter(x => x.id !== sid);
-      renderTracks(); renderStats();
-    } catch (_) { }
   });
   window.addEventListener("beforeunload", flushSongs);
 

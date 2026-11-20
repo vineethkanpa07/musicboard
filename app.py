@@ -521,16 +521,6 @@ def update_song(song_id):
     return jsonify(dict(db.execute("SELECT id, name, rating FROM songs WHERE id = ?", (song_id,)).fetchone()))
 
 
-@app.delete("/api/songs/<int:song_id>")
-@login_required
-def delete_song(song_id):
-    db = get_db()
-    owned_song(db, song_id)
-    db.execute("DELETE FROM songs WHERE id = ?", (song_id,))
-    db.commit()
-    return "", 204
-
-
 @app.put("/api/order")
 @login_required
 def save_order():
