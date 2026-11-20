@@ -352,6 +352,7 @@
     const tracks = found.filter(r => r.wrapperType === "track" && (r.kind || "song") === "song")
       .sort((a, b) => (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0));
     return { id: album.collectionId, title: album.collectionName || "Untitled", artist: album.artistName || "Unknown artist",
+             year: Number((album.releaseDate || "").slice(0, 4)) || null,
              artwork: album.artworkUrl100 || null, tracks: tracks.map(t => (t.trackName || "").trim()) };
   }
 
@@ -456,7 +457,7 @@
         <div class="sleeve">${sleeveHtml(a)}</div>
         <div class="album-meta">
           <h2 class="t-title">${esc(a.title)}</h2>
-          <p class="t-artist">${esc(a.artist)}</p>
+          <p class="t-artist">${esc(a.artist)}<span id="albYear">${a.year ? ` · ${a.year}` : ""}</span></p>
           <div class="stats" id="albStats"></div>
         </div>
       </div>
@@ -474,6 +475,7 @@
     $("#closeAlbum").onclick = close; $("#doneAlbum").onclick = close;
     ov.onEscape = close;
     if (RO) return;
+    if (!a.year) fillInYear(a);
 
     $("#delAlbum").onclick = () => {
       const n = a.songs.filter(s => s.name).length;
@@ -489,6 +491,25 @@
       };
     };
     if (focusFirst) setTimeout(() => document.querySelector(".track .rate")?.focus(), 0);
+  }
+
+  // Albums added before release years were saved: look the year up once and keep it. Albums that
+  // remember Apple's ID are looked up by it; older ones by an exact match on title and artist.
+  async function fillInYear(a) {
+    const same = (x, y) => (x || "").trim().toLowerCase() === (y || "").trim().toLowerCase();
+    try {
+      const term = `${a.title} ${a.artist}`;
+      const match = r => same(r.collectionName, a.title) && (same(r.artistName, a.artist) || same(r.collectionArtistName, a.artist));
+      let found = a.itunes_id
+        ? (await itunes("lookup", { id: a.itunes_id })).filter(r => r.wrapperType === "collection")
+        : (await itunes("search", { term, entity: "album", limit: 25 })).filter(match);
+      // Apple's album search misses some albums (like Blonde); its song search still finds their songs.
+      if (!found.length && !a.itunes_id) found = (await itunes("search", { term, entity: "song", limit: 25 })).filter(match);
+      const year = Number((found[0]?.releaseDate || "").slice(0, 4));
+      if (!year) return;
+      a.year = (await api("POST", `/api/albums/${a.id}/year`, { year })).year;
+      if (state.openId === a.id) $("#albYear").textContent = ` · ${a.year}`;
+    } catch (_) { /* no year shown; that's fine */ }
   }
 
   function renderStats() {

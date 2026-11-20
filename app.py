@@ -279,6 +279,7 @@ def album_json(db, row):
         "songs": [dict(s) for s in songs],
         "top_song_id": row["top_song_id"],
         "itunes_id": row["itunes_id"],
+        "year": row["year"],
     }
 
 
@@ -420,6 +421,30 @@ def clean_text(value, limit=300):
     return " ".join(str(value or "").split())[:limit]
 
 
+def clean_year(value):
+    try:
+        year = int(value)
+    except (TypeError, ValueError):
+        return None
+    return year if 1900 <= year <= time.gmtime().tm_year + 1 else None
+
+
+@app.post("/api/albums/<int:album_id>/year")
+@login_required
+def fill_in_year(album_id):
+    """Body: {"year": 2016}. Fills in the release year for an album added before years were saved.
+    It only sets a missing year, so album details stay as Apple gave them."""
+    db = get_db()
+    row = get_album_row(db, album_id)
+    year = clean_year((request.get_json(silent=True) or {}).get("year"))
+    if year is None:
+        abort(400, "That isn't a release year.")
+    if row["year"] is None:
+        db.execute("UPDATE albums SET year = ? WHERE id = ?", (year, album_id))
+        db.commit()
+    return jsonify(year=row["year"] or year)
+
+
 def already_on_shelf(db, itunes_id, title, artist):
     """The same Apple album, or (for albums added before IDs were saved) the same title by the same artist."""
     if db.execute("SELECT 1 FROM albums WHERE user_id = ? AND itunes_id = ?", (uid(), itunes_id)).fetchone():
@@ -438,8 +463,8 @@ def import_album():
 
     The search runs in the visitor's browser (so Apple's rate limit is per visitor, not shared by
     the whole site), and the browser sends the album it looked up:
-    {"id": <Apple's album ID>, "title": ..., "artist": ..., "artwork": "https://...mzstatic.com/...",
-     "tracks": ["Song", ...]}
+    {"id": <Apple's album ID>, "title": ..., "artist": ..., "year": 2016,
+     "artwork": "https://...mzstatic.com/...", "tracks": ["Song", ...]}
     """
     data = request.get_json(silent=True) or {}
     title, artist = clean_text(data.get("title")), clean_text(data.get("artist"))
@@ -451,6 +476,7 @@ def import_album():
     if not title or not artist or not isinstance(tracks, list) or len(tracks) > 300:
         abort(400, "Pick an album from the search results.")
     names = [clean_text(t) for t in tracks if isinstance(t, str)] or [""]
+    year = clean_year(data.get("year"))
     artwork = big_artwork(data.get("artwork"))
     if artwork and not ARTWORK_URL_RE.match(artwork):
         artwork = None  # only Apple's artwork links are used as covers
@@ -459,8 +485,8 @@ def import_album():
         abort(409, f"{title} is already on your shelf.")
     artist_id = find_or_create_artist(db, uid(), artist)
     cur = db.execute(
-        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at, itunes_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (uid(), title, artist_id, artwork, next_album_position(db, artist_id), time.time(), itunes_id),
+        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at, itunes_id, year) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (uid(), title, artist_id, artwork, next_album_position(db, artist_id), time.time(), itunes_id, year),
     )
     album_id = cur.lastrowid
     db.executemany(
