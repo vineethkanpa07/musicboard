@@ -156,21 +156,11 @@
   }
   const groupOf = albumId => groups().find(g => g.id === state.albums.get(albumId).artist_id);
 
-  function moveAlbum(id, targetId, after) {
-    const ids = groupOf(id).albums.map(x => x.id).filter(x => x !== id);
-    ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, id);
-    saveAlbumOrder(ids);
-  }
   function shiftAlbum(id, delta) {
     const ids = groupOf(id).albums.map(x => x.id); const i = ids.indexOf(id); const j = i + delta;
     if (j < 0 || j >= ids.length) return;
     [ids[i], ids[j]] = [ids[j], ids[i]];
     saveAlbumOrder(ids);
-  }
-  function moveGroup(key, targetKey, after) {
-    const ids = groups().map(g => g.id).filter(k => k !== key);
-    ids.splice(ids.indexOf(targetKey) + (after ? 1 : 0), 0, key);
-    saveArtistOrder(ids);
   }
   function shiftGroup(key, delta) {
     const ids = groups().map(g => g.id); const i = ids.indexOf(key); const j = i + delta;
@@ -201,53 +191,95 @@
     if (act && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); act.click(); }
   });
 
+  // ---------- drag to rearrange (iPhone-home-screen style) ----------
+  // While you drag, the album (or artist row) moves into the spot under your cursor and the others
+  // slide out of the way. Letting go keeps that order; cancelling slides everything back.
   let drag = null;
-  const clearMarks = () => document.querySelectorAll(".drop-before,.drop-after,.drop-target,.dragging")
-    .forEach(n => n.classList.remove("drop-before", "drop-after", "drop-target", "dragging"));
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Where an element sits in the layout, ignoring any slide animation still running on it.
+  function layoutBox(el) {
+    const parent = el.parentElement, pr = parent.getBoundingClientRect();
+    const left = pr.left + el.offsetLeft - parent.offsetLeft, top = pr.top + el.offsetTop - parent.offsetTop;
+    return { left, top, right: left + el.offsetWidth, bottom: top + el.offsetHeight, cx: left + el.offsetWidth / 2, cy: top + el.offsetHeight / 2 };
+  }
+  // Move `el` before/after `target`, animating every sibling from where it was to where it lands.
+  function slideMove(el, target, after) {
+    const items = [...el.parentElement.children];
+    const before = new Map(items.map(n => [n, n.getBoundingClientRect()]));
+    target.parentElement.insertBefore(el, after ? target.nextSibling : target);
+    if (reduceMotion) return;
+    for (const n of items) {
+      const a = before.get(n), b = n.getBoundingClientRect();
+      const dx = a.left - b.left, dy = a.top - b.top;
+      if (dx || dy) n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 200, easing: "cubic-bezier(.2,.7,.3,1)" });
+    }
+  }
+  // The album (in the dragged album's own row) nearest the cursor, counting the dragged one itself,
+  // so hovering over the gap it left behind changes nothing.
+  function nearestCard(e) {
+    const group = e.target.closest(".group");
+    if (!group || group.dataset.group !== drag.group) return null;
+    const boxes = [...group.querySelectorAll(".card")].map(c => ({ c, r: layoutBox(c) }));
+    const rowDist = b => e.clientY < b.r.top ? b.r.top - e.clientY : e.clientY > b.r.bottom ? e.clientY - b.r.bottom : 0;
+    const nearestRow = Math.min(...boxes.map(rowDist));
+    return boxes.filter(b => rowDist(b) === nearestRow)
+      .reduce((a, b) => Math.abs(e.clientX - b.r.cx) < Math.abs(e.clientX - a.r.cx) ? b : a).c;
+  }
+  function nearestGroup(e) {
+    const rows = [...shelves.querySelectorAll(".group")];
+    return rows.reduce((a, b) => Math.abs(e.clientY - layoutBox(b).cy) < Math.abs(e.clientY - layoutBox(a).cy) ? b : a, rows[0]);
+  }
+  // Swap places with the target, the way icons do: moving right/down lands after it, left/up before it.
+  function slideTo(el, target) {
+    if (!target || target === el) return;
+    const items = [...el.parentElement.children];
+    slideMove(el, target, items.indexOf(target) > items.indexOf(el));
+  }
+
   shelves.addEventListener("dragstart", e => {
     if (!state.arrange) return;
     const card = e.target.closest(".card");
-    if (card) { drag = { type: "album", id: Number(card.dataset.id), group: card.closest(".group").dataset.group }; card.classList.add("dragging"); }
-    else { const g = e.target.closest(".group"); if (!g) return; drag = { type: "group", key: Number(g.dataset.group) }; g.classList.add("dragging"); }
+    const el = card || e.target.closest(".group");
+    if (!el) return;
+    drag = card ? { type: "album", el, id: Number(card.dataset.id), group: card.closest(".group").dataset.group }
+                : { type: "group", el, key: Number(el.dataset.group) };
+    drag.dropped = false;
     e.dataTransfer.effectAllowed = "move";
     try { e.dataTransfer.setData("text/plain", "x"); } catch (_) { }
+    // style the spot it left as a placeholder after the browser has taken its drag picture
+    requestAnimationFrame(() => drag?.el.classList.add("dragging"));
   });
   shelves.addEventListener("dragover", e => {
     if (!drag) return;
     if (drag.type === "album") {
-      const card = e.target.closest(".card");
-      if (!card || Number(card.dataset.id) === drag.id || card.closest(".group").dataset.group !== drag.group) return;
-      e.preventDefault();
-      const r = card.getBoundingClientRect();
-      document.querySelectorAll(".drop-before,.drop-after").forEach(n => n.classList.remove("drop-before", "drop-after"));
-      card.classList.add(e.clientX > r.left + r.width / 2 ? "drop-after" : "drop-before");
+      const target = nearestCard(e);
+      if (!target) return;  // outside its artist's row
+      e.preventDefault(); e.dataTransfer.dropEffect = "move";
+      slideTo(drag.el, target);
     } else {
-      const g = e.target.closest(".group");
-      if (!g || Number(g.dataset.group) === drag.key) return;
-      e.preventDefault();
-      document.querySelectorAll(".drop-target").forEach(n => n.classList.remove("drop-target"));
-      g.classList.add("drop-target");
+      e.preventDefault(); e.dataTransfer.dropEffect = "move";
+      slideTo(drag.el, nearestGroup(e));
     }
   });
   shelves.addEventListener("drop", e => {
     if (!drag) return;
     e.preventDefault();
-    if (drag.type === "album") {
-      const card = e.target.closest(".card");
-      if (card && Number(card.dataset.id) !== drag.id) {
-        const r = card.getBoundingClientRect();
-        moveAlbum(drag.id, Number(card.dataset.id), e.clientX > r.left + r.width / 2);
-      }
-    } else {
-      const g = e.target.closest(".group");
-      if (g && Number(g.dataset.group) !== drag.key) {
-        const ids = groups().map(x => x.id);
-        moveGroup(drag.key, Number(g.dataset.group), ids.indexOf(Number(g.dataset.group)) > ids.indexOf(drag.key));
-      }
-    }
-    drag = null; clearMarks();
+    // Finish here, not in dragend: saving redraws the shelf, and the browser then sends dragend to
+    // the old, removed element, where it never reaches this page.
+    const { type, el } = drag;
+    drag = null;
+    el.classList.remove("dragging");
+    if (type === "album") saveAlbumOrder([...el.parentElement.querySelectorAll(".card")].map(c => Number(c.dataset.id)));
+    else saveArtistOrder([...shelves.querySelectorAll(".group")].map(g => Number(g.dataset.group)));
   });
-  shelves.addEventListener("dragend", () => { drag = null; clearMarks(); });
+  shelves.addEventListener("dragend", () => {
+    if (!drag) return;  // already handled by drop
+    // Let go somewhere that isn't a spot, or pressed Escape: put everything back where it was.
+    drag.el.classList.remove("dragging");
+    drag = null;
+    renderDashboard();
+  });
 
   $("#arrangeBtn")?.addEventListener("click", () => { state.arrange = !state.arrange; renderDashboard(); });
   $("#addAlbumBtn")?.addEventListener("click", openAddAlbum);
