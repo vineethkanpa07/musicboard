@@ -7,7 +7,8 @@ Rate every song on the albums you listen to, from 0.5 to 10.
 - Open an album and type a score next to each song. **+ Add song** adds anything the tracklist is missing.
   Enter jumps from the name to the score, and Enter again starts the next song.
 - Every score has a fixed color on a red (1) to green (10) scale.
-- The dashboard groups albums by artist automatically. Press **Arrange** to drag
+- The dashboard groups albums by artist automatically, one row per artist with 6 albums in view;
+  slide sideways with the ‹ › arrows (or swipe) when an artist has more. Press **Arrange** to drag
   albums within an artist, or drag whole artists up and down (arrow buttons work too).
 
 ## Friends and notifications
@@ -20,6 +21,12 @@ Rate every song on the albums you listen to, from 0.5 to 10.
 - Friends can open each other's boards (read-only) even when they're private. Everyone else only sees
   boards that are public.
 - The page checks for new notifications every 2 minutes while it's open and visible.
+
+## Comments
+
+Every album has a Comments section. The board's owner and their friends can comment; anyone who can see
+the board can read them. You can delete your own comments, and owners can delete any comment on their
+albums. New comments notify the album's owner and everyone else who commented on it.
 
 ## Accounts and public pages
 

@@ -10,6 +10,7 @@
   }
   const fmt = n => { const r = Math.round(n * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1); };
   // Averages always show one decimal ("8.0"); song scores stay as typed ("8", "7.5").
+  const reduceMotionPref = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const fmtAvg = n => (Math.round(n * 10) / 10).toFixed(1);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const $ = s => document.querySelector(s);
@@ -171,6 +172,8 @@
         <button class="btn primary" type="button" data-act="add">+ Add your first album</button></div>`;
       return;
     }
+    // keep each row's sideways scroll position when the shelf redraws (after a score change, etc.)
+    const scrolled = new Map([...el.querySelectorAll(".group")].map(sec => [sec.dataset.group, sec.querySelector(".grid")?.scrollLeft || 0]));
     el.innerHTML = gs.map((g, gi) => {
       const avgs = g.albums.map(albumAvg).filter(v => v != null);
       const gAvg = avgs.length ? avgs.reduce((a, b) => a + b, 0) / avgs.length : null;
@@ -183,10 +186,27 @@
             <button class="icon-btn" type="button" data-act="gup" data-key="${g.id}" ${gi === 0 ? "disabled" : ""} aria-label="Move ${esc(g.name)} up">▲</button>
             <button class="icon-btn" type="button" data-act="gdown" data-key="${g.id}" ${gi === gs.length - 1 ? "disabled" : ""} aria-label="Move ${esc(g.name)} down">▼</button></div>` : ""}
         </div>
-        <div class="grid">${g.albums.map((a, ai) => cardHtml(a, ai, g.albums.length)).join("")}</div>
+        <div class="row-wrap">
+          <button class="row-arrow prev" type="button" data-scroll="-1" aria-label="Previous albums by ${esc(g.name)}" hidden>‹</button>
+          <div class="grid">${g.albums.map((a, ai) => cardHtml(a, ai, g.albums.length)).join("")}</div>
+          <button class="row-arrow next" type="button" data-scroll="1" aria-label="More albums by ${esc(g.name)}" hidden>›</button>
+        </div>
       </section>`;
     }).join("");
+    el.querySelectorAll(".group").forEach(sec => {
+      const grid = sec.querySelector(".grid");
+      grid.scrollLeft = scrolled.get(sec.dataset.group) || 0;
+      grid.addEventListener("scroll", () => updateRowArrows(grid), { passive: true });
+      updateRowArrows(grid);
+    });
   }
+  // One row per artist, 6 albums in view; the ‹ › arrows appear only when there are more to slide to.
+  function updateRowArrows(grid) {
+    const wrap = grid.parentElement, max = grid.scrollWidth - grid.clientWidth;
+    wrap.querySelector(".prev").hidden = grid.scrollLeft <= 2;
+    wrap.querySelector(".next").hidden = grid.scrollLeft >= max - 2;
+  }
+  window.addEventListener("resize", () => document.querySelectorAll("#shelves .grid").forEach(updateRowArrows));
 
   // ---------- reordering ----------
   function saveAlbumOrder(ids) {
@@ -217,6 +237,12 @@
   // ---------- dashboard events ----------
   const shelves = $("#shelves");
   shelves.addEventListener("click", e => {
+    const arrow = e.target.closest(".row-arrow");
+    if (arrow) {
+      const grid = arrow.parentElement.querySelector(".grid");
+      grid.scrollBy({ left: Number(arrow.dataset.scroll) * grid.clientWidth, behavior: reduceMotionPref() ? "auto" : "smooth" });
+      return;
+    }
     const act = e.target.closest("[data-act]");
     if (act) {
       e.stopPropagation();
@@ -245,7 +271,8 @@
   // Where an element sits in the layout, ignoring any slide animation still running on it.
   function layoutBox(el) {
     const parent = el.parentElement, pr = parent.getBoundingClientRect();
-    const left = pr.left + el.offsetLeft - parent.offsetLeft, top = pr.top + el.offsetTop - parent.offsetTop;
+    // (rows scroll sideways now, so take the row's scroll position into account)
+    const left = pr.left + el.offsetLeft - parent.offsetLeft - parent.scrollLeft, top = pr.top + el.offsetTop - parent.offsetTop - parent.scrollTop;
     return { left, top, right: left + el.offsetWidth, bottom: top + el.offsetHeight, cx: left + el.offsetWidth / 2, cy: top + el.offsetHeight / 2 };
   }
   // Move `el` before/after `target`, animating every sibling from where it was to where it lands.
