@@ -185,9 +185,11 @@ def username_problem(name):
         return "Usernames are 3 to 30 characters: lowercase letters, numbers, dots, dashes or underscores, starting and ending with a letter or number."
     if name in RESERVED_USERNAMES:
         return "That username is reserved. Pick another one."
-    if FILE_LIKE_RE.search(name):
+    ending = FILE_LIKE_RE.search(name)
+    if ending:
         # Browsers and search engines request addresses like /favicon.ico and /robots.txt on every site.
-        return "Usernames can't end like a file name (for example .png or .txt). Pick another one."
+        return (f'Usernames can\'t end in "{ending.group(0)}", because that looks like a file name and could clash '
+                "with files every website has. Try it without the ending.")
     return None
 
 
