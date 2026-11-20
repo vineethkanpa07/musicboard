@@ -519,6 +519,8 @@
     ov.onEscape = close;
     if (RO) return;
     if (!a.year) fillInYear(a);
+    a._compare = null; a._comparing = false;
+    loadCompare(a);
 
     $("#delAlbum").onclick = () => {
       const n = a.songs.filter(s => s.name).length;
@@ -573,7 +575,11 @@
     $("#albStats").innerHTML = `
       <div class="stat"><div class="k">Average</div><div class="v">${avg != null ? `<span class="big-avg" style="background:${ratingColor(avg)}">${fmtAvg(avg)}</span>` : "—"}</div></div>
       <div class="stat"><div class="k">Rated</div><div class="v">${rated.length}/${a.songs.filter(s => s.name || s.rating != null).length}</div></div>
-      ${topHtml ? `<div class="stat"><div class="k">Top track${tied.length > 1 ? ` · ${tied.length}-way tie` : ""}</div>${topHtml}</div>` : ""}`;
+      ${topHtml ? `<div class="stat"><div class="k">Top track${tied.length > 1 ? ` · ${tied.length}-way tie` : ""}</div>${topHtml}</div>` : ""}
+      ${a._compare?.length ? `<div class="stat"><div class="k">Friends</div><div class="v">
+        <button class="btn compare-btn${a._comparing ? " on" : ""}" type="button" id="compareBtn">${a._comparing ? "Back to my scores"
+          : `Compare <span class="compare-count">${a._compare.length}</span>`}</button></div></div>` : ""}`;
+    $("#compareBtn")?.addEventListener("click", () => { a._comparing = !a._comparing; renderStats(); a._comparing ? renderCompare(a) : renderTracks(); });
     $("#topPick")?.addEventListener("change", async e => {
       const songId = Number(e.target.value), before = a.top_song_id;
       a.top_song_id = songId;
@@ -595,6 +601,49 @@
   function renderTracks() {
     const a = state.albums.get(state.openId); if (!a) return;
     $("#tracks").innerHTML = listedSongs(a).map((s, i) => trackHtml(s, i)).join("");
+    const tip = $(".sheet .tip"); if (tip) tip.hidden = false;
+  }
+
+  // ---------- compare an album's scores with friends ----------
+  // Only friends who have this album with at least one song rated; up to 4 side by side.
+  async function loadCompare(a) {
+    try {
+      const res = await api("GET", `/api/albums/${a.id}/compare`, undefined, { quiet: true });
+      if (state.openId !== a.id) return;
+      a._compare = res.friends;
+      a._compareSel = res.friends.slice(0, 4).map(f => f.username);
+      if (res.friends.length) renderStats();
+    } catch (_) { /* no compare button; nothing else changes */ }
+  }
+  const scoreBox = r => r == null ? `<span class="cmp-score cmp-none" title="Not rated">–</span>`
+    : `<span class="cmp-score" style="background:${ratingColor(r)}">${fmt(r)}</span>`;
+  function renderCompare(a) {
+    const box = $("#tracks"); if (!box) return;
+    const tip = $(".sheet .tip"); if (tip) tip.hidden = true;
+    const chosen = a._compare.filter(f => a._compareSel.includes(f.username));
+    const myAvg = albumAvg(a);
+    const avgBox = v => v == null ? `<span class="cmp-score cmp-none">–</span>` : `<span class="cmp-score cmp-avg" style="background:${ratingColor(v)}">${fmtAvg(v)}</span>`;
+    box.innerHTML = `<div class="compare-pick" role="group" aria-label="Friends to compare with (up to 4)">
+        <span class="compare-hint">${a._compare.length > 4 ? "Pick up to 4" : "Compare with"}</span>
+        ${a._compare.map(f => { const on = a._compareSel.includes(f.username), full = !on && a._compareSel.length >= 4;
+          return `<button class="chip${on ? " on" : ""}" type="button" data-friend="${esc(f.username)}" aria-pressed="${on}" ${full ? 'disabled title="You can compare up to 4 friends at once"' : ""}>
+            ${esc(f.username)} <span class="chip-avg" style="background:${ratingColor(f.average)}">${fmtAvg(f.average)}</span></button>`; }).join("")}
+      </div>
+      <div class="compare-wrap"><table class="compare">
+        <thead><tr><th class="no" scope="col">#</th><th scope="col">Song</th><th scope="col">You</th>
+          ${chosen.map(f => `<th scope="col" title="${esc(f.username)}"><span class="cmp-name">${esc(f.username)}</span></th>`).join("")}</tr></thead>
+        <tbody>${listedSongs(a).map((s, i) => `<tr><td class="no">${i + 1}</td><th scope="row" class="cmp-song">${esc(s.name)}</th>
+          <td>${scoreBox(s.rating)}</td>${chosen.map(f => `<td>${scoreBox(f.scores[String(s.id)])}</td>`).join("")}</tr>`).join("")}</tbody>
+        <tfoot><tr><td></td><th scope="row" class="cmp-song">Average</th><td>${avgBox(myAvg)}</td>
+          ${chosen.map(f => `<td>${avgBox(f.average)}</td>`).join("")}</tr></tfoot>
+      </table></div>`;
+    box.querySelector(".compare-pick").addEventListener("click", e => {
+      const chip = e.target.closest(".chip"); if (!chip || chip.disabled) return;
+      const name = chip.dataset.friend;
+      a._compareSel = a._compareSel.includes(name) ? a._compareSel.filter(n => n !== name) : [...a._compareSel, name].slice(0, 4);
+      renderCompare(a);
+      box.querySelector(`.chip[data-friend="${CSS.escape(name)}"]`)?.focus();
+    });
   }
   function parseRating(v) {
     const t = String(v).trim().replace(",", ".");

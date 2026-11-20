@@ -545,6 +545,51 @@ def import_album():
     return jsonify(album_json(db, get_album_row(db, album_id))), 201
 
 
+def song_key(name):
+    return " ".join((name or "").lower().split())
+
+
+@app.get("/api/albums/<int:album_id>/compare")
+@login_required
+def compare_album(album_id):
+    """Friends who have this album with at least one song rated, with their scores lined up to your songs.
+
+    A friend's album counts as the same one if it's the same Apple album, or (for albums added before
+    Apple IDs were saved) has the same title and artist. Songs are matched by name.
+    """
+    db = get_db()
+    mine = get_album_row(db, album_id)
+    my_songs = db.execute("SELECT id, name FROM songs WHERE album_id = ? ORDER BY position, id", (album_id,)).fetchall()
+    friends = friend_ids(db, uid())
+    if not friends:
+        return jsonify(friends=[])
+    marks = ",".join("?" * len(friends))
+    my_key = db.execute("SELECT key FROM artists WHERE id = ?", (mine["artist_id"],)).fetchone()["key"]
+    candidates = db.execute(
+        f"SELECT albums.id, albums.user_id, users.username FROM albums "
+        f"JOIN artists ON artists.id = albums.artist_id JOIN users ON users.id = albums.user_id "
+        f"WHERE albums.user_id IN ({marks}) AND ((albums.itunes_id IS NOT NULL AND albums.itunes_id = ?) "
+        f"OR (LOWER(albums.title) = LOWER(?) AND artists.key = ?))",
+        (*friends, mine["itunes_id"], mine["title"], my_key),
+    ).fetchall()
+    best = {}  # one album per friend: if they have two matching editions, the one they rated more
+    for album in candidates:
+        songs = db.execute("SELECT name, rating FROM songs WHERE album_id = ? ORDER BY position, id", (album["id"],)).fetchall()
+        rated = [s for s in songs if s["rating"] is not None]
+        previous = best.get(album["user_id"])
+        if rated and (previous is None or len(rated) > len(previous[1])):
+            best[album["user_id"]] = (album, rated, songs)
+    out = []
+    for album, rated, songs in best.values():
+        by_name = {song_key(s["name"]): s["rating"] for s in songs if s["name"]}
+        scores = {str(s["id"]): by_name[song_key(s["name"])] for s in my_songs
+                  if by_name.get(song_key(s["name"])) is not None}
+        out.append({"username": album["username"], "rated": len(rated), "total": len(songs),
+                    "average": sum(s["rating"] for s in rated) / len(rated), "scores": scores})
+    out.sort(key=lambda f: (-f["rated"], f["username"]))
+    return jsonify(friends=out)
+
+
 @app.put("/api/albums/<int:album_id>/top")
 @login_required
 def set_top_track(album_id):

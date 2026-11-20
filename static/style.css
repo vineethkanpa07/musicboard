@@ -297,3 +297,30 @@ a.link-btn { color: var(--muted); }
 .social-btn:has(.badge:not([hidden])) { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
 /* not much room beside the big title: the Notifications button shows just its bell and count */
 @media (max-width: 1060px) and (min-width: 641px) { #bellBtn .social-label { display: none; } #bellBtn { padding: 0 11px; } }
+
+/* Compare with friends (album view) */
+.compare-btn { height: 38px; padding: 0 14px; font-size: 15px; gap: 8px; }
+.compare-btn.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.compare-count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--accent-fg);
+  font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; }
+.compare-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0 14px; }
+.compare-hint { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin-right: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 12px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); font-weight: 600; font-size: 14px; }
+.chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.chip:disabled { opacity: .45; cursor: not-allowed; }
+.chip-avg { padding: 3px 7px; border-radius: 6px; font-size: 12px; font-weight: 700; color: #000 !important; -webkit-text-fill-color: #000; }
+.compare-wrap { overflow-x: auto; margin-inline: -4px; padding-inline: 4px; }
+.compare { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.compare th, .compare td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.compare thead th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; padding-bottom: 8px; }
+.compare thead th:nth-child(2), .compare .cmp-song { text-align: left; }
+.compare .no { width: 30px; color: var(--muted); font-size: 13px; text-align: right; padding-right: 10px; }
+.compare .cmp-song { font-weight: 500; white-space: normal; min-width: 130px; overflow-wrap: anywhere; }
+.compare tfoot th, .compare tfoot td { border-bottom: none; padding-top: 10px; }
+.compare tfoot .cmp-song { font-weight: 700; }
+.cmp-name { display: inline-block; max-width: 76px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; text-transform: none; letter-spacing: 0; }
+.cmp-score { display: inline-grid; place-items: center; width: 52px; height: 32px; border-radius: 7px; font-weight: 700; font-size: 15px;
+  color: #000 !important; -webkit-text-fill-color: #000; }
+.cmp-score.cmp-none { background: var(--surface-2); color: var(--muted) !important; -webkit-text-fill-color: var(--muted); font-weight: 500; }
+.cmp-score.cmp-avg { font-size: 16px; }
