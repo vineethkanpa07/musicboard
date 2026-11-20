@@ -280,6 +280,7 @@ def album_json(db, row):
         "top_song_id": row["top_song_id"],
         "itunes_id": row["itunes_id"],
         "year": row["year"],
+        "rated_at": row["rated_at"],
     }
 
 
@@ -523,7 +524,12 @@ def update_song(song_id):
     owned_song(db, song_id)
     data = request.get_json(silent=True) or {}  # only the score can change; song names come from iTunes
     if "rating" in data:
-        db.execute("UPDATE songs SET rating = ? WHERE id = ?", (clean_rating(data["rating"]), song_id))
+        rating = clean_rating(data["rating"])
+        song = db.execute("SELECT album_id, rating FROM songs WHERE id = ?", (song_id,)).fetchone()
+        if song["rating"] != rating:
+            db.execute("UPDATE songs SET rating = ? WHERE id = ?", (rating, song_id))
+            # remember when this album was last rated: the newest-rated album wins ties in Top albums
+            db.execute("UPDATE albums SET rated_at = ? WHERE id = ?", (time.time(), song["album_id"]))
     db.commit()
     return jsonify(dict(db.execute("SELECT id, name, rating FROM songs WHERE id = ?", (song_id,)).fetchone()))
 

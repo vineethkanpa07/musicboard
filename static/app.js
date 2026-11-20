@@ -111,15 +111,14 @@
       <div class="card-sub">${plural(songs.length, "track")}</div>
     </button>`;
   }
-  // The 5 highest-rated albums. Ties (on the average as shown, e.g. 8.3) go to the newer release,
-  // then to the album added more recently.
+  // The 5 highest-rated albums. Ties (on the average as shown, e.g. 8.3) go to the album rated most
+  // recently; albums not rated since that was tracked count from when they were added.
   function topAlbums() {
     return [...state.albums.values()]
       .map(a => ({ a, avg: albumAvg(a) }))
       .filter(x => x.avg != null)
       .sort((x, y) => Number(fmtAvg(y.avg)) - Number(fmtAvg(x.avg))
-        || (y.a.year || 0) - (x.a.year || 0)
-        || (y.a.created_at || 0) - (x.a.created_at || 0))
+        || (y.a.rated_at || y.a.created_at || 0) - (x.a.rated_at || x.a.created_at || 0))
       .slice(0, 5);
   }
   function renderTopAlbums() {
@@ -611,10 +610,11 @@
   document.addEventListener("input", e => {
     if (RO) return;
     const hit = songFromEvent(e); if (!hit || !hit.s) return;
-    const { s } = hit;
+    const { a, s } = hit;
     if (e.target.classList.contains("rate")) {
       const r = parseRating(e.target.value);
       if (r === undefined) return;
+      if (s.rating !== r) a.rated_at = Date.now() / 1000;  // newest-rated wins ties in Top albums
       s.rating = r;
       e.target.classList.toggle("filled", r != null);
       e.target.style.background = r != null ? ratingColor(r) : "";
