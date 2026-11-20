@@ -564,15 +564,15 @@
     const best = tied.find(s => s.id === a.top_song_id) || tied[0] || null;
     let topHtml = "";
     if (best && tied.length > 1 && !RO) {
-      topHtml = `<select class="top-pick" id="topPick" aria-label="Top track (${tied.length} songs scored ${fmt(top)})">
-        ${tied.map(s => `<option value="${s.id}" ${s === best ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`;
+      topHtml = `<div class="v"><select class="top-pick" id="topPick" aria-label="Top track (${tied.length} songs scored ${fmt(top)})">
+        ${tied.map(s => `<option value="${s.id}" ${s === best ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>`;
     } else if (best) {
-      topHtml = `<div style="font-weight:600;overflow-wrap:anywhere">${esc(best.name)}</div>`;
+      topHtml = `<div class="v"><span class="v-text" title="${esc(best.name)}">${esc(best.name)}</span></div>`;
     }
     $("#albStats").innerHTML = `
       <div class="stat"><div class="k">Average</div><div class="v">${avg != null ? `<span class="big-avg" style="background:${ratingColor(avg)}">${fmtAvg(avg)}</span>` : "—"}</div></div>
       <div class="stat"><div class="k">Rated</div><div class="v">${rated.length}/${a.songs.filter(s => s.name || s.rating != null).length}</div></div>
-      ${topHtml ? `<div class="stat" style="min-width:0"><div class="k">Top track${tied.length > 1 ? ` · ${tied.length}-way tie` : ""}</div>${topHtml}</div>` : ""}`;
+      ${topHtml ? `<div class="stat"><div class="k">Top track${tied.length > 1 ? ` · ${tied.length}-way tie` : ""}</div>${topHtml}</div>` : ""}`;
     $("#topPick")?.addEventListener("change", async e => {
       const songId = Number(e.target.value), before = a.top_song_id;
       a.top_song_id = songId;
