@@ -7,12 +7,16 @@ person's dashboard.
 Run with:  python app.py   then open http://127.0.0.1:5000
 """
 
+import json
 import math
 import os
 import re
 import secrets
 import sqlite3
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from functools import wraps
 from pathlib import Path
@@ -26,6 +30,10 @@ DATA_DIR = Path(os.environ.get("MUSICBOARD_DATA", BASE_DIR / "instance"))
 DB_PATH = DATA_DIR / "musicboard.db"
 COVER_DIR = DATA_DIR / "covers"
 ALLOWED_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
+
+# Album search uses Apple's free iTunes Search API (no key needed).
+ITUNES_API = os.environ.get("MUSICBOARD_ITUNES_API", "https://itunes.apple.com")
+ITUNES_COUNTRY = os.environ.get("MUSICBOARD_COUNTRY", "US")
 
 USERNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_.-]{1,28})[a-z0-9]$")
 # Usernames that would clash with the app's own pages.
@@ -368,6 +376,7 @@ def library_for(db, user_id):
 @app.errorhandler(400)
 @app.errorhandler(404)
 @app.errorhandler(413)
+@app.errorhandler(502)
 def json_error(err):
     message = getattr(err, "description", "Request failed.")
     if err.code == 413:
@@ -498,6 +507,148 @@ def delete_album(album_id):
     db.commit()
     delete_cover(row["cover"])
     return "", 204
+
+
+# ---------------------------------------------------------------- album search (iTunes)
+
+def itunes_get(path, **params):
+    url = f"{ITUNES_API}/{path}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Musicboard/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        if err.code in (403, 429):  # Apple allows roughly 20 searches a minute
+            abort(502, "Apple's music search is busy. Wait a minute and try again.")
+        abort(502, "Album search isn't working right now. Try again, or add the album yourself.")
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        abort(502, "Album search isn't reachable right now. Check your internet connection, or add the album yourself.")
+
+
+def big_artwork(url, size=600):
+    """iTunes artwork URLs end in e.g. 100x100bb.jpg; ask for a larger square instead."""
+    return re.sub(r"/\d+x\d+bb\.(jpg|png)$", f"/{size}x{size}bb.jpg", url or "") or None
+
+
+def download_cover(url):
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Musicboard/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if not resp.headers.get_content_type().startswith("image/"):
+                return None
+            data = resp.read(10 * 1024 * 1024 + 1)
+    except (urllib.error.URLError, TimeoutError):
+        return None  # the album still gets added, just without a cover
+    if len(data) > 10 * 1024 * 1024:
+        return None
+    filename = uuid.uuid4().hex + ".jpg"
+    (COVER_DIR / filename).write_bytes(data)
+    return filename
+
+
+def albums_from_songs(query):
+    """Albums that contain songs matching the search. Apple's album search can miss an artist's own
+    albums (searching "blonde frank ocean" doesn't return Blonde), but its song search finds them."""
+    albums = []
+    for r in itunes_get("search", term=query, entity="song", limit=50, country=ITUNES_COUNTRY).get("results", []):
+        if r.get("collectionId"):
+            albums.append({
+                "collectionId": r["collectionId"], "collectionName": r.get("collectionName"),
+                "artistName": r.get("collectionArtistName") or r.get("artistName"),
+                "releaseDate": r.get("releaseDate"), "trackCount": r.get("trackCount"),
+                "collectionExplicitness": r.get("collectionExplicitness"), "artworkUrl100": r.get("artworkUrl100"),
+            })
+    return albums
+
+
+JUNK_WORDS = ("tribute", "karaoke", "instrumental", "lullaby", "relaxing", "piano versions", "made famous", "cover versions")
+
+
+def rank_albums(items, query):
+    """Apple's search ranks lots of singles first. Put full albums whose title matches the search on top."""
+    words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 1]
+
+    def score(item):
+        index, r = item
+        title = (r.get("collectionName") or "").lower()
+        artist = (r.get("artistName") or "").lower()
+        points = sum(2 for w in words if w in title) + sum(1 for w in words if w in artist)
+        if words and all(w in title or w in artist for w in words):
+            points += 3  # every word of the search is in the title or artist
+        if any(j in title and j not in query.lower() for j in JUNK_WORDS):
+            points -= 5
+        if title.endswith(" - single") or (r.get("trackCount") or 0) <= 2:
+            points -= 4
+        elif title.endswith(" - ep"):
+            points -= 1
+        return (-points, index)  # ties keep Apple's order
+
+    return [r for _, r in sorted(enumerate(items), key=score)]
+
+
+@app.get("/api/search")
+@login_required
+def search_albums():
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify(results=[])
+    albums = itunes_get("search", term=q, entity="album", limit=100, country=ITUNES_COUNTRY).get("results", [])
+    albums += albums_from_songs(q)
+    seen, unique = set(), []
+    for r in albums:
+        if r.get("collectionId") and r["collectionId"] not in seen:
+            seen.add(r["collectionId"]); unique.append(r)
+    results = []
+    for r in rank_albums(unique, q)[:15]:
+        if r.get("collectionType") not in (None, "Album") or not r.get("collectionId"):
+            continue
+        results.append({
+            "id": r["collectionId"],
+            "title": r.get("collectionName", ""),
+            "artist": r.get("artistName", ""),
+            "year": (r.get("releaseDate") or "")[:4],
+            "tracks": r.get("trackCount"),
+            "explicit": r.get("collectionExplicitness") == "explicit",
+            "artwork": r.get("artworkUrl100"),
+        })
+    return jsonify(results=results)
+
+
+@app.post("/api/albums/import")
+@login_required
+def import_album():
+    """Body: {"id": <iTunes collection id>}. Creates the album with its full tracklist and cover."""
+    data = request.get_json(silent=True) or {}
+    try:
+        collection_id = int(data.get("id"))
+    except (TypeError, ValueError):
+        abort(400, "Pick an album from the search results.")
+    found = itunes_get("lookup", id=collection_id, entity="song", country=ITUNES_COUNTRY).get("results", [])
+    album = next((r for r in found if r.get("wrapperType") == "collection"), None)
+    if album is None:
+        abort(404, "That album couldn't be found anymore. Try searching again.")
+    tracks = sorted(
+        (r for r in found if r.get("wrapperType") == "track" and r.get("kind", "song") == "song"),
+        key=lambda r: (r.get("discNumber") or 1, r.get("trackNumber") or 0),
+    )
+    db = get_db()
+    artist_id = find_or_create_artist(db, uid(), album.get("artistName") or "Unknown artist")
+    cover_name = download_cover(big_artwork(album.get("artworkUrl100")))
+    cur = db.execute(
+        "INSERT INTO albums (user_id, title, artist_id, cover, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (uid(), (album.get("collectionName") or "Untitled").strip(), artist_id, cover_name,
+         next_album_position(db, artist_id), time.time()),
+    )
+    album_id = cur.lastrowid
+    names = [(t.get("trackName") or "").strip() for t in tracks] or [""]
+    db.executemany(
+        "INSERT INTO songs (album_id, name, rating, position) VALUES (?, ?, NULL, ?)",
+        [(album_id, name, i) for i, name in enumerate(names)],
+    )
+    db.commit()
+    return jsonify(album_json(db, get_album_row(db, album_id))), 201
 
 
 @app.post("/api/albums/<int:album_id>/songs")

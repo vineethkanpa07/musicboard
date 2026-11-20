@@ -287,14 +287,20 @@
     ov.innerHTML = `<form class="sheet small" role="dialog" aria-modal="true" aria-labelledby="addH">
       <div class="sheet-body">
         <h3 id="addH">New album</h3>
+        <div class="field"><label for="albumSearch">Search for an album</label>
+          <input class="text" id="albumSearch" type="search" autocomplete="off" placeholder="Album or artist, e.g. Blonde Frank Ocean"></div>
+        <div class="results" id="searchResults" aria-live="polite"></div>
+        <button class="link-btn manual-toggle" type="button" id="manualToggle">Can't find it? Add it yourself</button>
+        <div class="manual" id="manualFields" hidden>
         <div class="field"><label for="newTitle">Album</label><input class="text" id="newTitle" autocomplete="off" placeholder="e.g. Blonde"></div>
         <div class="field"><label for="newArtist">Artist</label><input class="text" id="newArtist" list="artistList" autocomplete="off" placeholder="e.g. Frank Ocean">
           <datalist id="artistList">${groups().map(g => `<option value="${esc(g.name)}">`).join("")}</datalist></div>
         <div class="field"><label>Cover (optional)</label>
           <div class="cover-pick"><div class="sleeve" id="newCoverPrev"><div class="ph">?</div></div>
             <button class="btn" type="button" id="newCoverBtn">Choose image</button></div></div>
+        </div>
         <p class="err" id="newErr" hidden></p>
-        <div class="row"><button class="btn" type="button" id="newCancel">Cancel</button><button class="btn primary" type="submit" id="newSubmit">Add album</button></div>
+        <div class="row"><button class="btn" type="button" id="newCancel">Cancel</button><button class="btn primary" type="submit" id="newSubmit" hidden>Add album</button></div>
       </div></form>`;
     document.body.appendChild(ov);
     ov.addEventListener("mousedown", e => { if (e.target === ov) closeOverlay(); });
@@ -319,7 +325,59 @@
         renderDashboard(); openAlbum(album.id, true);
       } catch (_) { $("#newSubmit").disabled = false; }
     });
-    setTimeout(() => $("#newTitle").focus(), 0);
+
+    // --- search ---
+    const onShelf = r => [...state.albums.values()].some(a =>
+      a.title.trim().toLowerCase() === r.title.trim().toLowerCase() && a.artist.trim().toLowerCase() === r.artist.trim().toLowerCase());
+    let searchTimer = null, searchCtl = null, lastResults = [];
+    const resultsEl = $("#searchResults");
+    function showResults(results, q) {
+      lastResults = results;
+      if (!q) { resultsEl.innerHTML = ""; return; }
+      if (!results.length) { resultsEl.innerHTML = `<p class="results-note">No albums found for “${esc(q)}”. Try fewer words, or add it yourself below.</p>`; return; }
+      resultsEl.innerHTML = results.map((r, i) => `<button class="result" type="button" data-i="${i}">
+        ${r.artwork ? `<img src="${esc(r.artwork)}" alt="" loading="lazy">` : `<span class="result-ph"></span>`}
+        <span class="result-text"><span class="result-title">${esc(r.title)}${r.explicit ? ' <span class="e-badge" title="Explicit">E</span>' : ""}</span>
+          <span class="result-sub">${esc(r.artist)}${r.year ? ` · ${esc(r.year)}` : ""}${r.tracks ? ` · ${plural(r.tracks, "track")}` : ""}</span></span>
+        ${onShelf(r) ? '<span class="result-tag">On your shelf</span>' : ""}
+      </button>`).join("");
+    }
+    $("#albumSearch").addEventListener("input", e => {
+      const q = e.target.value.trim();
+      clearTimeout(searchTimer); searchCtl?.abort();
+      if (q.length < 2) { showResults([], ""); return; }
+      resultsEl.innerHTML = `<p class="results-note">Searching…</p>`;
+      searchTimer = setTimeout(async () => {
+        searchCtl = new AbortController();
+        try {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: searchCtl.signal });
+          const data = await res.json();
+          if (!res.ok) { resultsEl.innerHTML = `<p class="results-note">${esc(data.error || "Search failed.")}</p>`; return; }
+          showResults(data.results, q);
+        } catch (err) {
+          if (err.name !== "AbortError") resultsEl.innerHTML = `<p class="results-note">Search isn't reachable right now. Add the album yourself below.</p>`;
+        }
+      }, 300);
+    });
+    $("#albumSearch").addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); resultsEl.querySelector(".result")?.click(); }
+    });
+    resultsEl.addEventListener("click", async e => {
+      const btn = e.target.closest(".result"); if (!btn || btn.disabled) return;
+      const r = lastResults[Number(btn.dataset.i)];
+      resultsEl.querySelectorAll(".result").forEach(b => { b.disabled = true; });
+      btn.classList.add("loading"); btn.querySelector(".result-sub").textContent = "Adding album and tracklist…";
+      try {
+        const album = await api("POST", "/api/albums/import", { id: r.id });
+        state.albums.set(album.id, album); syncArtist(album);
+        renderDashboard(); openAlbum(album.id, "rate");
+      } catch (_) { showResults(lastResults, $("#albumSearch").value.trim()); }
+    });
+    $("#manualToggle").onclick = () => {
+      $("#manualFields").hidden = false; $("#newSubmit").hidden = false; $("#manualToggle").hidden = true;
+      $("#newTitle").value = $("#albumSearch").value.trim(); $("#newTitle").focus();
+    };
+    setTimeout(() => $("#albumSearch").focus(), 0);
   }
 
   // ---------- album sheet ----------
@@ -400,7 +458,8 @@
         } catch (_) { }
       };
     };
-    if (focusFirst) setTimeout(() => document.querySelector(".track .name")?.focus(), 0);
+    if (focusFirst === "rate") setTimeout(() => document.querySelector(".track .rate")?.focus(), 0);
+    else if (focusFirst) setTimeout(() => document.querySelector(".track .name")?.focus(), 0);
   }
 
   function renderStats() {
